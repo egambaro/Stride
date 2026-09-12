@@ -55,21 +55,129 @@ function phaseFor(w) {
   return { key: "base", name: "Base aerobica", desc: "Motore aerobico e fondamentali. Costruisci la base." };
 }
 
-const LIB = {
-  pull: { base: ["Australian pull up 3×10", "Chin up 3× max", "Dead hang 3×30\""],
-          build: ["Pull up 4×6–8", "Chin up front iso 3×10\"", "Australian wide 3×12"],
-          peak: ["Wide pull up 3× max", "Pull up anelli 3×8", "Muscle up tecnica 4×2"] },
-  push: { base: ["Push up 3×10", "Dip su parallele 3×8", "Push up larghi 3×12"],
-          build: ["Dip 4×8", "Dip anelli 3×6", "Push up stretti 3×15"],
-          peak: ["Dip bar 3× max", "Dip anelli 3×8", "Muscle up 4×2"] },
-  core: { base: ["Leg raise 3×10", "Plank 3×40\"", "Compressioni a terra 3×30\""],
-          build: ["Toes to bar 3×10", "Dragon flag 3×20\" iso", "Jesolo crunch 2×(30\"+20\" iso)"],
-          peak: ["Dragon flag 3× max", "Toes to bar 3×12", "Candela 3×30\""] },
-  grip: { base: ["Dead hang 3×30\"", "Australian tenuta 3×20\""],
-          build: ["Dead hang 3×45\"", "Wide pull up iso 3×3\"", "Aquila di sangue 3×10"],
-          peak: ["Monkey bar simulazione 3× tratto", "Dead hang zavorrato 3×30\"", "Chin up front iso 3×10\""] },
+// ── Exercise library with progressions (from gym whiteboard) ─────
+// Each pattern lists variants ordered easy→hard; the engine picks by
+// difficulty tier (0=base .. 3=peak) computed from level+phase.
+// ── Exercise library with progressions (from gym whiteboard) ─────
+// Each pattern lists variants ordered easy→hard; the engine picks by
+// difficulty tier (0=base .. 3=peak) computed from level+phase.
+const EX = {
+  pull: ["Australian pull up", "Chin up", "Pull up", "Wide pull up", "Pull up anelli", "Muscle up tecnica"],
+  push: ["Push up", "Push up larghi", "Dip parallele", "Dip", "Dip anelli", "Dip bar / muscle up"],
+  legs: ["Squat corpo libero", "Affondi camminata", "Squat bulgaro", "Squat monopodalico", "Step-up zavorrato"],
+  core: ["Plank", "Leg raise", "Toes to bar", "Dragon flag iso", "Dragon flag", "Candela lenta"],
+  grip: ["Dead hang", "Australian tenuta", "Dead hang zavorrato", "Wide pull up iso", "Aquila di sangue", "Monkey bar simulazione"],
 };
-const phaseKeyToLib = (k) => (k === "base" ? "base" : k === "build" ? "build" : "peak");
+
+// difficulty tier 0..(len-1) from level(0..2) and phaseTier(0..2)
+function variant(pattern, level, phaseTier) {
+  const arr = EX[pattern];
+  const idx = Math.min(arr.length - 1, Math.round((level + phaseTier) / 4 * (arr.length - 1)) + level);
+  return arr[Math.min(arr.length - 1, idx)];
+}
+
+// sets/reps/rest scale with level, phaseTier and weekly progression (0..1)
+function dose(kind, level, phaseTier, prog, deload) {
+  const base = { pull: 3, push: 3, legs: 3, core: 3, grip: 3 }[kind] || 3;
+  let sets = base + (level >= 2 ? 1 : 0) + (phaseTier >= 2 ? 1 : 0) + Math.round(prog);
+  if (deload) sets = Math.max(2, sets - 1);
+  const repMap = { // reps by phase focus
+    base: ["12–15", "10–12", "8–10"],
+    build: ["8–10", "6–8", "5–6"],
+    peak: ["max", "8", "6"],
+  };
+  const rest = phaseTier >= 2 ? "45–60\"" : phaseTier === 1 ? "60–90\"" : "90\"";
+  return { sets, rest };
+}
+
+// ── Cardio builder — scales with distance, phase, progression ─────
+function cardioBlock(kind, p, ph, longMin, prog, deload) {
+  const lvl = +p.level, inc = +p.defaultIncline;
+  const taper = ph.key === "taper";
+  const mult = deload ? 0.7 : 1;
+  if (kind === "long") return {
+    type: "cardio", title: "Fondo lungo tapis roulant",
+    duration: Math.round((taper ? longMin * 0.6 : longMin) * mult),
+    speed: `${paceBase(lvl)} km/h`, incline: `${inc}%`, target: zone(+p.age, 0.6, 0.72),
+    detail: `Ritmo costante per la resistenza gara. Aumenta gradualmente la durata rispetto alla scorsa settimana.`,
+  };
+  if (kind === "intervals") {
+    const raw = deload ? 6 : (taper ? 6 : 8 + Math.round(prog * 3) + lvl);
+    const reps = Math.max(6, Math.min(12, raw));
+    return {
+      type: "cardio", title: "Intervalli in salita (VO2)",
+      duration: 10 + reps * 3,
+      speed: `${paceBase(lvl)}↔${paceFast(lvl)} km/h`, incline: `${inc}→${inc + 5}%`, target: zone(+p.age, 0.85, 0.95),
+      detail: `${reps}× (1' forte a ${paceFast(lvl)} km/h incl. ${inc + 5}% · 2' recupero). Simula gli scatti tra ostacoli.`,
+    };
+  }
+  if (kind === "tempo") return {
+    type: "cardio", title: "Tempo run (soglia)",
+    duration: deload ? 18 : 22 + Math.round(prog * 8),
+    speed: `${(paceBase(lvl) + paceFast(lvl)) / 2} km/h`, incline: `${inc + 1}%`, target: zone(+p.age, 0.8, 0.88),
+    detail: `Ritmo sostenuto e continuo appena sotto soglia. Alza il muro aerobico.`,
+  };
+  // hill
+  return {
+    type: "cardio", title: "Salite ripide (dislivello gara)",
+    duration: deload ? 15 : 20 + Math.round(prog * 6),
+    speed: `${paceBase(lvl)} km/h`, incline: `${inc + 7}%`, target: zone(+p.age, 0.72, 0.85),
+    detail: `Camminata/corsa ripida. La Spartan ha molto dislivello: qui costruisci le gambe da salita.`,
+  };
+}
+
+// ── Strength block builder ───────────────────────────────────────
+function strBlock(title, patterns, p, ph, phaseTier, prog, deload, isGrip) {
+  const lvl = +p.level;
+  const repRow = { base: ["12–15", "10–12", "8–10"], build: ["8–10", "6–8", "5–6"], peak: ["6–8", "5", "max"] }[ph.key === "taper" ? "peak" : ph.key] || ["10–12"];
+  const exercises = patterns.map((pat) => {
+    const name = variant(pat, lvl, phaseTier);
+    const d = dose(pat, lvl, phaseTier, prog, deload);
+    const reps = pat === "core" || pat === "grip"
+      ? (pat === "grip" ? `${20 + phaseTier * 10 + Math.round(prog * 10)}"` : ["30\"", "10–12", "max"][phaseTier])
+      : repRow[Math.min(2, phaseTier)];
+    return `${name} · ${d.sets}×${reps}`;
+  });
+  return {
+    type: isGrip ? "grip" : "strength", title, exercises,
+    detail: deload ? "Settimana di scarico: fermati 2-3 rip prima del cedimento." : `Recupero ${dose(patterns[0], lvl, phaseTier, prog, deload).rest} tra le serie.`,
+  };
+}
+
+// ── Session templates by split, depending on weekly frequency ────
+// Returns an ordered array of "session kinds" for the week.
+function splitFor(freq, weak) {
+  // each entry: { key, kind:'cardio'|'gym'|'combo', focus }
+  const C_int = { kind: "cardio", sub: "intervals" };
+  const C_long = { kind: "cardio", sub: "long" };
+  const C_hill = { kind: "cardio", sub: "hill" };
+  const C_tempo = { kind: "cardio", sub: "tempo" };
+  const G_push = { kind: "gym", focus: "push" };
+  const G_pull = { kind: "gym", focus: "pull" };
+  const G_full = { kind: "gym", focus: "full" };
+  const G_legs = { kind: "gym", focus: "legs" };
+  const Combo = (f) => ({ kind: "combo", focus: f });
+
+  let plan;
+  switch (freq) {
+    case 1: plan = [Combo("full")]; break;
+    case 2: plan = [Combo("full"), C_int]; break;
+    case 3: plan = [G_full, C_int, Combo("full")]; break; // full-body dense
+    case 4: plan = [G_push, C_int, G_pull, C_long]; break; // upper split + 2 cardio
+    case 5: plan = [G_push, C_int, G_pull, C_hill, G_legs]; break;
+    case 6: plan = [G_push, C_int, G_pull, C_tempo, G_legs, C_long]; break;
+    default: plan = [G_full, C_int, Combo("full")];
+  }
+  // weakness bias
+  if (weak === "endurance") { // swap one gym for a cardio
+    const gi = plan.findIndex((x) => x.kind === "gym" || x.kind === "combo");
+    if (gi >= 0 && freq >= 3) plan[gi] = C_hill;
+  }
+  if (weak === "pull") plan = plan.map((x) => (x.kind === "gym" && x.focus === "push" ? G_full : x)).concat();
+  return plan;
+}
+
+const phaseTierOf = (k) => (k === "base" ? 0 : k === "build" ? 1 : 2); // taper→2
 
 function buildWeek(p) {
   const w = weeksTo(p.raceDate);
@@ -79,60 +187,55 @@ function buildWeek(p) {
   const race = RACES[p.raceType] || RACES.super;
   const km = +p.raceKm || race.km;
   const obst = +p.raceObstacles || race.obstacles;
-  const lvl = +p.level;
   const dayNames = ["Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom"];
   const chosen = Array.isArray(p.trainDays) && p.trainDays.length ? [...p.trainDays].sort((a, b) => a - b) : [0, 2, 4];
   const freq = chosen.length;
-  const lib = phaseKeyToLib(ph.key);
-  const taper = ph.key === "taper";
   const weak = p.weakness;
+  const phaseTier = phaseTierOf(ph.key);
 
-  const pull = LIB.pull[lib], push = LIB.push[lib], core = LIB.core[lib], grip = LIB.grip[lib];
-  const pick = (arr, n) => arr.slice(0, n);
-  const longMin = Math.min(70, Math.round(km * (ph.key === "base" ? 4 : ph.key === "build" ? 4.5 : 5)));
+  // weekly progression: how far into the CURRENT phase are we (0..1),
+  // with every 4th week a deload
+  const totalW = weeksTo(p.startDate || p.raceDate); // weeks from start not tracked; approximate via race
+  const weekNo = (p.startDate ? Math.max(1, Math.ceil((Date.now() - new Date(p.startDate + "T00:00:00")) / (7 * 864e5))) : 1);
+  const deload = weekNo % 4 === 0;
+  // progression inside phase: base big, shrinks near race
+  const prog = ph.key === "base" ? 0.3 : ph.key === "build" ? 0.6 : ph.key === "peak" ? 1 : 0.4;
 
-  const cardio = {
-    long: { type: "cardio", title: "Fondo lungo tapis roulant",
-      speed: `${paceBase(lvl)} km/h`, incline: `${p.defaultIncline}`, duration: taper ? Math.round(longMin * 0.6) : longMin,
-      target: zone(+p.age, 0.6, 0.72),
-      detail: `Ritmo costante, resistenza gara (${km} km). Inclinazione ${p.defaultIncline}%.` },
-    intervals: { type: "cardio", title: "Intervalli in salita",
-      speed: `${paceBase(lvl)}↔${paceFast(lvl)} km/h`, incline: `${p.defaultIncline}→${p.defaultIncline + 5}`, duration: taper ? 16 : 26,
-      target: zone(+p.age, 0.8, 0.9),
-      detail: `${taper ? 6 : 10}× (1' veloce ${paceFast(lvl)} km/h a incl. ${p.defaultIncline + 5}% · 2' recupero). Simula gli strappi tra ostacoli.` },
-    hill: { type: "cardio", title: "Salite lunghe (dislivello gara)",
-      speed: `${paceBase(lvl)} km/h`, incline: `${p.defaultIncline + 7}`, duration: taper ? 14 : 22,
-      target: zone(+p.age, 0.7, 0.82),
-      detail: `Camminata veloce ripida. La Spartan ha molto dislivello. Incl. ${p.defaultIncline + 7}%.` },
+  const longMin = Math.min(75, Math.round(km * (ph.key === "base" ? 4 : ph.key === "build" ? 4.5 : 5)));
+  const combo = p.dayStyle === "combo"; // force combo, else use split's own kind
+
+  const split = splitFor(freq, weak);
+
+  const gymFocus = (focus) => {
+    // returns array of blocks for a gym/combo day
+    if (focus === "push") return [strBlock("Spinta", ["push", "push"], p, ph, phaseTier, prog, deload), strBlock("Core", ["core"], p, ph, phaseTier, prog, deload)];
+    if (focus === "pull") return [strBlock("Trazione", ["pull", "pull"], p, ph, phaseTier, prog, deload), strBlock("Grip", ["grip"], p, ph, phaseTier, prog, deload, true), strBlock("Core", ["core"], p, ph, phaseTier, prog, deload)];
+    if (focus === "legs") return [strBlock("Gambe", ["legs", "legs"], p, ph, phaseTier, prog, deload), strBlock("Core", ["core"], p, ph, phaseTier, prog, deload)];
+    // full
+    return [strBlock("Trazione", ["pull"], p, ph, phaseTier, prog, deload), strBlock("Spinta", ["push"], p, ph, phaseTier, prog, deload), strBlock("Gambe", ["legs"], p, ph, phaseTier, prog, deload), strBlock("Grip / core", ["grip", "core"], p, ph, phaseTier, prog, deload, true)];
   };
 
-  const S = (title, exs, isGrip) => ({ type: isGrip ? "grip" : "strength", title, exercises: exs, detail: taper ? "Volume ridotto: fermati 2 rip prima del cedimento." : "Recupero 60–90\" tra le serie." });
-
-  const gyms = [
-    { name: "Trazione + core", blocks: [S("Trazione (sbarra/anelli)", pick(pull, 2)), S("Core", pick(core, 2)), S("Grip", pick(grip, 1), true)] },
-    { name: "Spinta + core", blocks: [S("Spinta (dip/push)", pick(push, 2)), S("Core", pick(core, 2))] },
-    { name: "Full body ostacoli", blocks: [S("Trazione", pick(pull, 1)), S("Spinta", pick(push, 1)), S("Grip / monkey bar", pick(grip, 2), true), S("Core", pick(core, 1))] },
-  ];
-  if (weak === "pull") gyms.unshift({ name: "Focus TRAZIONE + grip", blocks: [S("Trazione (priorità)", pick(pull, 3)), S("Grip", pick(grip, 2), true)] });
-  if (weak === "push") gyms.unshift({ name: "Focus SPINTA", blocks: [S("Spinta (priorità)", pick(push, 3)), S("Core", pick(core, 1))] });
-
-  const cardioSlots = weak === "endurance" ? Math.ceil(freq / 2) + 1 : Math.max(2, Math.floor(freq / 2));
-  const cardioSeq = [cardio.intervals, cardio.long, cardio.hill];
-
-  const zipped = [];
-  let cN = Math.min(cardioSlots, freq), gN = freq - cN, ct = 0, gt = 0, toggle = true;
-  for (let i = 0; i < freq; i++) {
-    if ((toggle && ct < cN) || gt >= gN) { zipped.push("c"); ct++; } else { zipped.push("g"); gt++; }
-    toggle = !toggle;
-  }
-  const out = []; let ci = 0, gi = 0;
-  zipped.forEach((kind, i) => {
+  const out = split.slice(0, freq).map((slot, i) => {
     const label = dayNames[chosen[i]] ?? dayNames[i];
-    if (kind === "c") { const b = cardioSeq[ci % 3]; out.push({ day: label, name: b.title, blocks: [b] }); ci++; }
-    else { const g = gyms[gi % gyms.length]; out.push({ day: label, name: g.name, blocks: g.blocks }); gi++; }
+    if (slot.kind === "cardio") {
+      const b = cardioBlock(slot.sub, p, ph, longMin, prog, deload);
+      return { day: label, name: b.title, blocks: [b] };
+    }
+    if (slot.kind === "combo" || combo) {
+      // short cardio finisher + focused strength
+      const cardioFin = cardioBlock(i % 2 ? "intervals" : "hill", p, ph, Math.round(longMin * 0.5), prog * 0.6, deload);
+      cardioFin.duration = Math.min(cardioFin.duration, 20);
+      cardioFin.title = "Cardio (finisher)";
+      const blocks = [...gymFocus(slot.focus || "full").slice(0, 2), cardioFin];
+      return { day: label, name: "Combo forza + cardio", blocks };
+    }
+    // gym
+    return { day: label, name: gymName(slot.focus), blocks: gymFocus(slot.focus) };
   });
-  return { phase: ph, weeks: w, km, obst, days: out };
+
+  return { phase: ph, weeks: w, km, obst, days: out, deload, weekNo };
 }
+function gymName(f) { return { push: "Spinta + core", pull: "Trazione + grip", legs: "Gambe + core", full: "Full body" }[f] || "Palestra"; }
 
 function Field({ label, children }) {
   return (<label style={{ display: "block", marginBottom: 16 }}>
@@ -188,6 +291,10 @@ function Race({ p, setP, onBuild }) {
       <Field label="Punto debole su cui insistere">
         <Seg value={p.weakness} onChange={(v) => setP({ ...p, weakness: v })} options={[{ v: "balanced", l: "Bilanciato" }, { v: "endurance", l: "Fiato" }, { v: "pull", l: "Trazione/grip" }, { v: "push", l: "Spinta" }]} />
       </Field>
+      <Field label="Stile delle giornate">
+        <Seg value={p.dayStyle} onChange={(v) => setP({ ...p, dayStyle: v })} options={[{ v: "split", l: "Separati" }, { v: "combo", l: "Combo (cardio+forza)" }]} />
+      </Field>
+      <Field label="Inizio del programma"><input style={inputStyle} type="date" value={p.startDate} onChange={(e) => setP({ ...p, startDate: e.target.value })} /></Field>
       {w != null && w >= 0 && ph && (
         <div style={{ padding: 18, borderRadius: 14, background: C.panel, border: `1px solid ${C.line}`, marginBottom: 20 }}>
           <div style={{ display: "flex", alignItems: "baseline", gap: 12 }}>
@@ -248,12 +355,12 @@ function Plan({ p, onMark, todayStatus }) {
   const [open, setOpen] = useState(0);
   if (!p.age || !p.height || !p.weight) return <Empty text="Completa il Profilo per generare il piano." />;
   if (!p.raceDate) return <Empty text="Imposta la data della gara nella sezione Gara." />;
-  const { phase, weeks, km, obst, days } = buildWeek(p);
+  const { phase, weeks, km, obst, days, deload, weekNo } = buildWeek(p);
   if (weeks === -1 || !phase || phase.key === "done") return <Empty text="La data gara è passata. Aggiornala nella sezione Gara." />;
   return (
     <div>
       <h2 style={h2}>Settimana</h2>
-      <p style={sub}>{phase.name} · {weeks} sett. alla gara · {km} km · {obst} ostacoli</p>
+      <p style={sub}>{phase.name} · settimana {weekNo}{deload ? " (scarico)" : ""} · {weeks} sett. alla gara · {km} km · {obst} ostacoli</p>
       <div style={{ padding: 14, borderRadius: 12, background: C.panel, border: `1px solid ${C.line}`, marginBottom: 16 }}>
         <span style={{ fontFamily: F.body, fontSize: 13, color: C.mute, lineHeight: 1.5 }}>{phase.desc}</span>
       </div>
@@ -435,12 +542,13 @@ const navBtn = { width: 36, height: 36, borderRadius: 9, border: `1px solid ${C.
 
 function App() {
   const [tab, setTab] = useState("plan");
-  const [p, setP] = useState(() => store.get("profile_v3", {
+  const [p, setP] = useState(() => store.get("profile_v4", {
     height: "", weight: "", age: "", sex: "m", level: 1,
     raceDate: "", raceType: "super", raceKm: 10, raceObstacles: 25,
     trainDays: [0, 2, 4], weakness: "balanced", defaultIncline: 3,
+    startDate: todayKey(), dayStyle: "split",
   }));
-  useEffect(() => store.set("profile_v3", p), [p]);
+  useEffect(() => store.set("profile_v4", p), [p]);
 
   const [log, setLog] = useState(() => loadLog());
   useEffect(() => saveLog(log), [log]);
