@@ -237,6 +237,95 @@ function buildWeek(p) {
 }
 function gymName(f) { return { push: "Spinta + core", pull: "Trazione + grip", legs: "Gambe + core", full: "Full body" }[f] || "Palestra"; }
 
+// ── Gemini API helpers (browser-direct; key stays in localStorage) ─
+// Google's generativelanguage endpoint permits browser CORS with the
+// key as a query param, so a static PWA can call it directly.
+const GEM_BASE = "https://generativelanguage.googleapis.com/v1beta";
+
+async function gemListModels(key) {
+  const r = await fetch(`${GEM_BASE}/models?key=${encodeURIComponent(key)}`);
+  if (!r.ok) { const t = await r.text(); throw new Error(`${r.status}: ${t.slice(0, 160)}`); }
+  const d = await r.json();
+  return (d.models || [])
+    .filter((m) => (m.supportedGenerationMethods || []).includes("generateContent"))
+    .map((m) => m.name.replace("models/", ""));
+}
+
+async function gemGenerate(key, model, parts, { json = false } = {}) {
+  const body = {
+    contents: [{ role: "user", parts }],
+    generationConfig: json ? { responseMimeType: "application/json", temperature: 0.6 } : { temperature: 0.7 },
+  };
+  const r = await fetch(`${GEM_BASE}/models/${model}:generateContent?key=${encodeURIComponent(key)}`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+  if (!r.ok) { const t = await r.text(); throw new Error(`${r.status}: ${t.slice(0, 200)}`); }
+  const d = await r.json();
+  const cand = d.candidates?.[0];
+  if (!cand) throw new Error("Nessuna risposta dal modello.");
+  return (cand.content?.parts || []).map((p) => p.text || "").join("").trim();
+}
+
+// strip ```json fences if present, then parse
+function parseJSON(text) {
+  const clean = text.replace(/```json\s*|\s*```/g, "").trim();
+  return JSON.parse(clean);
+}
+
+// Convert a file (image) to base64 for inline_data
+function fileToInlinePart(file) {
+  return new Promise((res, rej) => {
+    const rd = new FileReader();
+    rd.onload = () => res({ inline_data: { mime_type: file.type || "image/jpeg", data: rd.result.split(",")[1] } });
+    rd.onerror = () => rej(new Error("Lettura file fallita"));
+    rd.readAsDataURL(file);
+  });
+}
+
+// ── High-level tasks ─────────────────────────────────────────────
+function planContext(p, gen) {
+  return `Atleta: ${p.age} anni, ${p.sex === "f" ? "donna" : "uomo"}, ${p.height} cm, ${p.weight} kg, livello ${["principiante", "intermedio", "avanzato"][+p.level]}.
+Obiettivo: Spartan ${p.raceType} (${p.raceKm} km, ${p.raceObstacles} ostacoli) il ${p.raceDate}, tra ${gen.weeks} settimane, fase "${gen.phase?.name}".
+Giorni/sett: ${p.trainDays?.length}. Punto debole: ${p.weakness}. Stile: ${p.dayStyle}.
+Attrezzi palestra disponibili: sbarra, anelli, parallele, dip station, corpo libero. Tapis roulant a casa (inclinazione 0-12%).
+Piano attuale generato dall'app:
+${gen.days?.map((d) => `- ${d.day} · ${d.name}: ${d.blocks.map((b) => b.type === "cardio" ? `${b.title} ${b.duration}min` : `${b.title} [${(b.exercises || []).join("; ")}]`).join(" | ")}`).join("\n")}`;
+}
+
+async function aiRewritePlan(p, gen, key, model) {
+  const prompt = `Sei un preparatore atletico esperto di Spartan Race e calisthenics.
+${planContext(p, gen)}
+
+Riscrivi il piano SETTIMANALE ottimizzandolo per questo atleta e questa fase. Usa SOLO gli attrezzi elencati.
+Rispondi in JSON con questo schema esatto:
+{"days":[{"day":"Lun","name":"...","blocks":[{"type":"cardio|strength|grip","title":"...","duration":30,"speed":"6 km/h","incline":"3%","target":"140-150 bpm","exercises":["Nome · 3×10"],"detail":"..."}]}]}
+Per i blocchi cardio includi duration/speed/incline/target. Per strength/grip includi exercises (con serie×rip) e detail. Mantieni ${p.trainDays?.length} giorni. Testo in italiano.`;
+  const txt = await gemGenerate(key, model, [{ text: prompt }], { json: true });
+  const obj = parseJSON(txt);
+  if (!obj.days || !Array.isArray(obj.days)) throw new Error("Formato risposta non valido.");
+  return obj.days;
+}
+
+async function aiSwapExercise(exercise, p, key, model) {
+  const prompt = `Atleta livello ${["principiante", "intermedio", "avanzato"][+p.level]}, prepara una Spartan Race.
+Attrezzi: sbarra, anelli, parallele, dip station, corpo libero.
+Proponi 4 esercizi ALTERNATIVI a "${exercise}" che allenino lo stesso pattern muscolare, con serie×ripetizioni adatte.
+Rispondi in JSON: {"alternatives":["Nome · 3×10","..."]}. Solo italiano.`;
+  const txt = await gemGenerate(key, model, [{ text: prompt }], { json: true });
+  return parseJSON(txt).alternatives || [];
+}
+
+async function aiReadPhoto(file, p, key, model) {
+  const img = await fileToInlinePart(file);
+  const prompt = `Questa è la foto di uno schema di allenamento (lavagna/foglio) del mio allenatore, spesso in italiano con abbreviazioni (es. "3x10", "REC 2'", "ISO", "PP x2").
+Leggi tutto lo schema e strutturalo in JSON pulito:
+{"title":"...","sessions":[{"name":"...","exercises":["Nome · serie×rip o durata"]}],"notes":"eventuali note"}
+Interpreta le abbreviazioni in modo sensato. Solo italiano.`;
+  const txt = await gemGenerate(key, model, [{ text: prompt }, img], { json: true });
+  return parseJSON(txt);
+}
+
+
 function Field({ label, children }) {
   return (<label style={{ display: "block", marginBottom: 16 }}>
     <span style={{ fontSize: 12, color: C.mute, fontFamily: F.body, display: "block", marginBottom: 6 }}>{label}</span>
@@ -343,6 +432,63 @@ function Profile({ p, setP }) {
           <Stat k="Zona soglia" v={zone(+p.age, 0.8, 0.9)} />
         </div>
       </div>
+
+      <AISettings p={p} setP={setP} />
+    </div>
+  );
+}
+
+function AISettings({ p, setP }) {
+  const [testing, setTesting] = useState(false);
+  const [status, setStatus] = useState(null); // {ok, msg}
+  const [models, setModels] = useState(p.aiModels || []);
+
+  const test = async () => {
+    if (!p.aiKey) { setStatus({ ok: false, msg: "Inserisci prima la API key." }); return; }
+    setTesting(true); setStatus(null);
+    try {
+      const list = await gemListModels(p.aiKey.trim());
+      const flash = list.find((m) => /flash/i.test(m) && /2\.\d|latest/i.test(m)) || list.find((m) => /flash/i.test(m)) || list[0];
+      setModels(list);
+      setP({ ...p, aiKey: p.aiKey.trim(), aiModels: list, aiModel: p.aiModel && list.includes(p.aiModel) ? p.aiModel : flash });
+      setStatus({ ok: true, msg: `Connessa. ${list.length} modelli disponibili.` });
+    } catch (e) {
+      setStatus({ ok: false, msg: `Errore: ${e.message}` });
+    } finally { setTesting(false); }
+  };
+
+  return (
+    <div style={{ marginTop: 22, padding: 18, borderRadius: 14, background: C.panel, border: `1px solid ${C.line}` }}>
+      <div style={{ fontFamily: F.display, fontSize: 17, fontWeight: 700, color: C.ink, marginBottom: 4 }}>Coach IA (Gemini)</div>
+      <div style={{ fontFamily: F.body, fontSize: 13, color: C.mute, marginBottom: 16, lineHeight: 1.5 }}>
+        La chiave resta salvata solo su questo telefono. Serve per far rielaborare il piano, sostituire esercizi e leggere le foto degli schemi.
+      </div>
+
+      <Field label="Gemini API key">
+        <input style={inputStyle} type="password" value={p.aiKey || ""} onChange={(e) => setP({ ...p, aiKey: e.target.value })} placeholder="AIza..." autoComplete="off" />
+      </Field>
+
+      <button onClick={test} disabled={testing} style={{ ...cta, opacity: testing ? 0.6 : 1, marginBottom: 12 }}>
+        {testing ? "Verifica in corso…" : "Testa connessione"}
+      </button>
+
+      {status && (
+        <div style={{ padding: "10px 12px", borderRadius: 10, marginBottom: 12, fontFamily: F.body, fontSize: 13, color: status.ok ? C.bg : C.ink, background: status.ok ? C.signal : "transparent", border: `1px solid ${status.ok ? C.signal : C.strength}` }}>
+          {status.msg}
+        </div>
+      )}
+
+      {models.length > 0 && (
+        <Field label="Modello">
+          <select value={p.aiModel || ""} onChange={(e) => setP({ ...p, aiModel: e.target.value })} style={{ ...inputStyle, appearance: "none" }}>
+            {models.map((m) => <option key={m} value={m} style={{ background: C.bg }}>{m}</option>)}
+          </select>
+        </Field>
+      )}
+
+      <div style={{ fontFamily: F.body, fontSize: 12, color: C.faint, marginTop: 4, lineHeight: 1.5 }}>
+        Ottieni una chiave gratuita su aistudio.google.com/apikey
+      </div>
     </div>
   );
 }
@@ -351,19 +497,100 @@ function Stat({ k, v }) {
     <div style={{ fontFamily: F.body, fontSize: 15, color: C.ink, fontWeight: 600, marginTop: 2 }}>{v}</div></div>);
 }
 
-function Plan({ p, onMark, todayStatus }) {
+function Plan({ p, setP, onMark, todayStatus, aiPlan, setAiPlan }) {
   const [open, setOpen] = useState(0);
+  const [busy, setBusy] = useState(null); // "rewrite" | "photo" | `swap-i-j-k`
+  const [err, setErr] = useState(null);
+  const [proposal, setProposal] = useState(null); // pending AI plan awaiting approval
+  const [swap, setSwap] = useState(null); // {bi,bj,ek,alts}
+
   if (!p.age || !p.height || !p.weight) return <Empty text="Completa il Profilo per generare il piano." />;
   if (!p.raceDate) return <Empty text="Imposta la data della gara nella sezione Gara." />;
-  const { phase, weeks, km, obst, days, deload, weekNo } = buildWeek(p);
+  const gen = buildWeek(p);
+  const { phase, weeks, km, obst, deload, weekNo } = gen;
   if (weeks === -1 || !phase || phase.key === "done") return <Empty text="La data gara è passata. Aggiornala nella sezione Gara." />;
+
+  const days = aiPlan || gen.days; // AI plan overrides engine plan when present
+  const hasKey = !!p.aiKey;
+
+  const runRewrite = async () => {
+    setErr(null); setBusy("rewrite");
+    try {
+      const newDays = await aiRewritePlan(p, gen, p.aiKey.trim(), p.aiModel || "gemini-1.5-flash");
+      setProposal(newDays);
+    } catch (e) { setErr(`Coach IA: ${e.message}`); }
+    finally { setBusy(null); }
+  };
+  const applyProposal = () => { setAiPlan(proposal); setProposal(null); setOpen(0); };
+
+  const runPhoto = async (file) => {
+    if (!file) return;
+    setErr(null); setBusy("photo");
+    try {
+      const parsed = await aiReadPhoto(file, p, p.aiKey.trim(), p.aiModel || "gemini-1.5-flash");
+      // turn parsed sessions into plan days appended
+      const extra = (parsed.sessions || []).map((s, i) => ({
+        day: parsed.title ? parsed.title.slice(0, 12) : `Coach ${i + 1}`,
+        name: s.name || "Scheda allenatore",
+        blocks: [{ type: "strength", title: s.name || "Scheda", exercises: s.exercises || [], detail: parsed.notes || "Importato dalla foto." }],
+      }));
+      if (!extra.length) throw new Error("Nessun esercizio riconosciuto nella foto.");
+      setProposal([...(aiPlan || gen.days), ...extra]);
+    } catch (e) { setErr(`Lettura foto: ${e.message}`); }
+    finally { setBusy(null); }
+  };
+
+  const runSwap = async (bi, bj, ek, exercise) => {
+    setErr(null); setBusy(`swap-${bi}-${bj}-${ek}`);
+    try {
+      const alts = await aiSwapExercise(exercise, p, p.aiKey.trim(), p.aiModel || "gemini-1.5-flash");
+      setSwap({ bi, bj, ek, alts, original: exercise });
+    } catch (e) { setErr(`Alternative: ${e.message}`); }
+    finally { setBusy(null); }
+  };
+  const applySwap = (choice) => {
+    const src = aiPlan || gen.days;
+    const copy = src.map((d) => ({ ...d, blocks: d.blocks.map((b) => ({ ...b, exercises: b.exercises ? [...b.exercises] : b.exercises })) }));
+    copy[swap.bi].blocks[swap.bj].exercises[swap.ek] = choice;
+    setAiPlan(copy); setSwap(null);
+  };
+
   return (
     <div>
       <h2 style={h2}>Settimana</h2>
       <p style={sub}>{phase.name} · settimana {weekNo}{deload ? " (scarico)" : ""} · {weeks} sett. alla gara · {km} km · {obst} ostacoli</p>
-      <div style={{ padding: 14, borderRadius: 12, background: C.panel, border: `1px solid ${C.line}`, marginBottom: 16 }}>
-        <span style={{ fontFamily: F.body, fontSize: 13, color: C.mute, lineHeight: 1.5 }}>{phase.desc}</span>
+
+      {/* AI action bar */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
+        <button onClick={hasKey ? runRewrite : null} disabled={!hasKey || busy}
+          style={{ flex: "1 1 auto", padding: "12px", borderRadius: 10, border: `1px solid ${C.signal}`, background: hasKey ? C.signal : "transparent", color: hasKey ? C.bg : C.faint, fontFamily: F.body, fontSize: 14, fontWeight: 700, cursor: hasKey ? "pointer" : "default", opacity: busy === "rewrite" ? 0.6 : 1 }}>
+          {busy === "rewrite" ? "Elaboro…" : "⚡ Rielabora con IA"}
+        </button>
+        <label style={{ flex: "1 1 auto", padding: "12px", borderRadius: 10, border: `1px solid ${C.line}`, background: "transparent", color: hasKey ? C.ink : C.faint, fontFamily: F.body, fontSize: 14, fontWeight: 600, cursor: hasKey ? "pointer" : "default", textAlign: "center", opacity: busy === "photo" ? 0.6 : 1 }}>
+          {busy === "photo" ? "Leggo…" : "📷 Foto schema"}
+          <input type="file" accept="image/*" disabled={!hasKey || busy} onChange={(e) => runPhoto(e.target.files?.[0])} style={{ display: "none" }} />
+        </label>
       </div>
+      {!hasKey && <div style={{ marginBottom: 14, fontFamily: F.body, fontSize: 12, color: C.faint }}>Aggiungi la Gemini API key nel Profilo per attivare le funzioni IA.</div>}
+      {aiPlan && <button onClick={() => setAiPlan(null)} style={{ marginBottom: 14, padding: "8px 12px", borderRadius: 8, border: `1px solid ${C.line}`, background: "transparent", color: C.mute, fontFamily: F.body, fontSize: 13, cursor: "pointer" }}>↩ Torna al piano dell'app</button>}
+      {err && <div style={{ padding: "10px 12px", borderRadius: 10, marginBottom: 14, fontFamily: F.body, fontSize: 13, color: C.ink, border: `1px solid ${C.strength}` }}>{err}</div>}
+
+      {/* Proposal approval banner */}
+      {proposal && (
+        <div style={{ padding: 16, borderRadius: 14, background: C.panel, border: `1px solid ${C.signal}`, marginBottom: 16 }}>
+          <div style={{ fontFamily: F.body, fontSize: 14, color: C.ink, fontWeight: 600, marginBottom: 4 }}>Nuova proposta dell'IA pronta</div>
+          <div style={{ fontFamily: F.body, fontSize: 13, color: C.mute, marginBottom: 12, lineHeight: 1.5 }}>{proposal.length} giorni. Vuoi sostituire il piano attuale?</div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={applyProposal} style={{ flex: 1, padding: "11px 0", borderRadius: 10, border: "none", background: C.signal, color: C.bg, fontFamily: F.body, fontSize: 14, fontWeight: 700, cursor: "pointer" }}>Applica</button>
+            <button onClick={() => setProposal(null)} style={{ flex: 1, padding: "11px 0", borderRadius: 10, border: `1px solid ${C.line}`, background: "transparent", color: C.mute, fontFamily: F.body, fontSize: 14, cursor: "pointer" }}>Annulla</button>
+          </div>
+        </div>
+      )}
+
+      <div style={{ padding: 14, borderRadius: 12, background: C.panel, border: `1px solid ${C.line}`, marginBottom: 16 }}>
+        <span style={{ fontFamily: F.body, fontSize: 13, color: C.mute, lineHeight: 1.5 }}>{aiPlan ? "Piano rielaborato dall'IA. Tocca un esercizio per sostituirlo." : phase.desc}</span>
+      </div>
+
       {days.map((s, i) => {
         const isOpen = open === i;
         return (
@@ -387,12 +614,23 @@ function Plan({ p, onMark, todayStatus }) {
                       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 8 }}>
                         <Metric k="Durata" v={`${bl.duration} min`} />
                         <Metric k="Velocità" v={bl.speed} />
-                        <Metric k="Inclinazione" v={`${bl.incline}%`} />
+                        <Metric k="Inclinazione" v={bl.incline} />
                         <Metric k="Zona FC" v={bl.target} wide />
                       </div>
                     ) : (
-                      <ul style={{ margin: 0, paddingLeft: 18, color: C.ink, fontFamily: F.body, fontSize: 14, lineHeight: 1.8 }}>
-                        {bl.exercises.map((ex, k) => <li key={k}>{ex}</li>)}
+                      <ul style={{ margin: 0, paddingLeft: 4, listStyle: "none" }}>
+                        {(bl.exercises || []).map((ex, k) => {
+                          const swapping = busy === `swap-${i}-${j}-${k}`;
+                          return (
+                            <li key={k} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "6px 0", color: C.ink, fontFamily: F.body, fontSize: 14 }}>
+                              <span>{ex}</span>
+                              {hasKey && <button onClick={() => runSwap(i, j, k, ex)} disabled={busy}
+                                style={{ flexShrink: 0, padding: "5px 10px", borderRadius: 8, border: `1px solid ${C.line}`, background: "transparent", color: C.mute, fontFamily: F.body, fontSize: 12, cursor: "pointer", opacity: swapping ? 0.6 : 1 }}>
+                                {swapping ? "…" : "↺ Cambia"}
+                              </button>}
+                            </li>
+                          );
+                        })}
                       </ul>
                     )}
                     <p style={{ margin: "10px 0 0", fontFamily: F.body, fontSize: 13, color: C.mute, lineHeight: 1.5 }}>{bl.detail}</p>
@@ -414,6 +652,20 @@ function Plan({ p, onMark, todayStatus }) {
           </div>
         );
       })}
+
+      {/* Swap chooser modal */}
+      {swap && (
+        <div onClick={() => setSwap(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.6)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 50 }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 520, background: C.panel, borderTopLeftRadius: 18, borderTopRightRadius: 18, border: `1px solid ${C.line}`, padding: 20, paddingBottom: "calc(20px + env(safe-area-inset-bottom))" }}>
+            <div style={{ fontFamily: F.display, fontSize: 18, fontWeight: 700, color: C.ink, marginBottom: 4 }}>Sostituisci esercizio</div>
+            <div style={{ fontFamily: F.body, fontSize: 13, color: C.mute, marginBottom: 16 }}>Al posto di: {swap.original}</div>
+            {swap.alts.map((a, i) => (
+              <button key={i} onClick={() => applySwap(a)} style={{ width: "100%", textAlign: "left", padding: "14px 16px", borderRadius: 10, marginBottom: 8, border: `1px solid ${C.line}`, background: C.bg, color: C.ink, fontFamily: F.body, fontSize: 14, cursor: "pointer" }}>{a}</button>
+            ))}
+            <button onClick={() => setSwap(null)} style={{ width: "100%", padding: "12px 0", borderRadius: 10, border: "none", background: "transparent", color: C.mute, fontFamily: F.body, fontSize: 14, cursor: "pointer", marginTop: 4 }}>Chiudi</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -542,16 +794,18 @@ const navBtn = { width: 36, height: 36, borderRadius: 9, border: `1px solid ${C.
 
 function App() {
   const [tab, setTab] = useState("plan");
-  const [p, setP] = useState(() => store.get("profile_v4", {
+  const [p, setP] = useState(() => store.get("profile_v5", {
     height: "", weight: "", age: "", sex: "m", level: 1,
     raceDate: "", raceType: "super", raceKm: 10, raceObstacles: 25,
     trainDays: [0, 2, 4], weakness: "balanced", defaultIncline: 3,
     startDate: todayKey(), dayStyle: "split",
   }));
-  useEffect(() => store.set("profile_v4", p), [p]);
+  useEffect(() => store.set("profile_v5", p), [p]);
 
   const [log, setLog] = useState(() => loadLog());
   useEffect(() => saveLog(log), [log]);
+  const [aiPlan, setAiPlan] = useState(() => store.get("aiplan_v1", null));
+  useEffect(() => store.set("aiplan_v1", aiPlan), [aiPlan]);
   const tk = todayKey();
   const todayStatus = log[tk]?.status || null;
   const mark = (status, name) => {
@@ -581,7 +835,7 @@ function App() {
         <span style={{ fontFamily: F.body, fontSize: 12, color: C.faint }}>Spartan training</span>
       </header>
       <main style={{ maxWidth: 520, margin: "0 auto", padding: "8px 20px 110px" }}>
-        {tab === "plan" && <Plan p={p} onMark={mark} todayStatus={todayStatus} />}
+        {tab === "plan" && <Plan p={p} setP={setP} onMark={mark} todayStatus={todayStatus} aiPlan={aiPlan} setAiPlan={setAiPlan} />}
         {tab === "race" && <Race p={p} setP={setP} onBuild={() => setTab("plan")} />}
         {tab === "cal" && <Calendar log={log} onSetDay={setDay} />}
         {tab === "profile" && <Profile p={p} setP={setP} />}
