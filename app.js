@@ -497,7 +497,7 @@ function Stat({ k, v }) {
     <div style={{ fontFamily: F.body, fontSize: 15, color: C.ink, fontWeight: 600, marginTop: 2 }}>{v}</div></div>);
 }
 
-function Plan({ p, setP, onMark, todayStatus, aiPlan, setAiPlan }) {
+function Plan({ p, setP, onMark, todayStatus, aiPlan, setAiPlan, onQuickTimer }) {
   const [open, setOpen] = useState(0);
   const [busy, setBusy] = useState(null); // "rewrite" | "photo" | `swap-i-j-k`
   const [err, setErr] = useState(null);
@@ -515,7 +515,7 @@ function Plan({ p, setP, onMark, todayStatus, aiPlan, setAiPlan }) {
   const hasKey = !!p.aiKey;
 
   if (live) {
-    return <LiveSession day={live} restDefault={75}
+    return <LiveSession day={live} onQuickTimer={onQuickTimer}
       onExit={() => setLive(null)}
       onFinish={(summary) => { onMark("done", live.name); setLive(null); }} />;
   }
@@ -875,14 +875,20 @@ function macros(p, goalPreset) {
   const c = calories(p);
   if (!c) return null;
   const kcal = c.tdee + (goalPreset === "gain" ? 300 : goalPreset === "cut" ? -400 : 0);
-  // Spartan endurance-friendly flat split: 45% carbs, 30% protein, 25% "verdure/fibre+grassi buoni"
-  const carbKcal = kcal * 0.45, proKcal = kcal * 0.30, vegKcal = kcal * 0.25;
+  // Split: protein driven by bodyweight (2 g/kg), fats 25% of kcal, carbs fill the rest.
+  const kg = +p.weight || 70;
+  const proteinG = Math.round(2.0 * kg);
+  const proKcal = proteinG * 4;
+  const fatKcal = kcal * 0.25;
+  const fatG = Math.round(fatKcal / 9);
+  const carbKcal = Math.max(0, kcal - proKcal - fatKcal);
+  const carbG = Math.round(carbKcal / 4);
   return {
     kcal: Math.round(kcal),
-    carbs: Math.round(carbKcal / 4), // g
-    protein: Math.round(proKcal / 4),
-    veg: Math.round(vegKcal / 9 * 0.4 + vegKcal / 4 * 0.6), // mixed fibre/fats approx
-    proteinPerKg: +(proKcal / 4 / (+p.weight || 1)).toFixed(1),
+    carbs: carbG,
+    protein: proteinG,
+    veg: fatG, // "verdure/grassi buoni" bucket, reported as fat grams
+    proteinPerKg: +(proteinG / kg).toFixed(1),
   };
 }
 
@@ -895,8 +901,7 @@ function parseSets(exercise) {
   if (m) return { name: m[1].trim(), sets: Math.min(8, +m[2]), reps: m[3].trim() };
   return { name: exercise, sets: 3, reps: "10" };
 }
-function LiveSession({ day, restDefault, onFinish, onExit }) {
-  // build editable set list from the day's strength/grip blocks
+function LiveSession({ day, onQuickTimer, onFinish, onExit }) {
   const initial = [];
   (day.blocks || []).forEach((b) => {
     if (b.type === "cardio") { initial.push({ cardio: true, title: b.title, detail: b.detail, duration: b.duration, done: false }); return; }
@@ -906,31 +911,19 @@ function LiveSession({ day, restDefault, onFinish, onExit }) {
     });
   });
   const [rows, setRows] = useState(initial);
-  const [rest, setRest] = useState(0); // seconds remaining
-  const [restLen, setRestLen] = useState(restDefault || 75);
+  const [restLen, setRestLen] = useState(75);
   const [startedAt] = useState(Date.now());
-
-  useEffect(() => {
-    if (rest <= 0) return;
-    const t = setInterval(() => setRest((r) => {
-      if (r <= 1) { clearInterval(t); try { navigator.vibrate?.(400); } catch {} return 0; }
-      return r - 1;
-    }), 1000);
-    return () => clearInterval(t);
-  }, [rest > 0]);
 
   const setRow = (i, patch) => setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
   const toggleDone = (i) => {
     const r = rows[i];
     setRow(i, { done: !r.done });
-    if (!r.done && !r.cardio) setRest(restLen); // starting rest after completing a set
+    if (!r.done && !r.cardio && onQuickTimer) onQuickTimer(restLen); // auto-start rest on completing a set
   };
 
   const doneCount = rows.filter((r) => r.done).length;
   const totalCount = rows.length;
   const volume = rows.reduce((s, r) => s + ((r.done && r.reps && r.weight) ? (+r.reps * +r.weight) : 0), 0);
-
-  const fmt = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 
   return (
     <div style={{ paddingBottom: 20 }}>
@@ -940,29 +933,16 @@ function LiveSession({ day, restDefault, onFinish, onExit }) {
       </div>
       <p style={sub}>{day.day} · {doneCount}/{totalCount} completati{volume ? ` · volume ${volume} kg` : ""}</p>
 
-      {/* Rest timer bar */}
-      <div style={{ position: "sticky", top: 0, zIndex: 5, padding: 14, borderRadius: 14, background: rest > 0 ? C.signal : C.panel, border: `1px solid ${rest > 0 ? C.signal : C.line}`, marginBottom: 16, transition: "background .2s" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div>
-            <div style={{ fontFamily: F.body, fontSize: 11, color: rest > 0 ? C.bg : C.faint, fontWeight: 600 }}>RECUPERO</div>
-            <div style={{ fontFamily: F.display, fontSize: 34, fontWeight: 800, color: rest > 0 ? C.bg : C.ink, lineHeight: 1 }}>{fmt(rest)}</div>
-          </div>
-          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-            {rest > 0 ? (
-              <>
-                <button onClick={() => setRest((r) => r + 15)} style={timerBtn(rest)}>+15s</button>
-                <button onClick={() => setRest(0)} style={timerBtn(rest)}>Stop</button>
-              </>
-            ) : (
-              [45, 60, 75, 90, 120].map((s) => (
-                <button key={s} onClick={() => { setRestLen(s); setRest(s); }} style={{ ...timerBtn(0), background: restLen === s ? C.line : "transparent" }}>{s}s</button>
-              ))
-            )}
-          </div>
+      {/* rest length selector — big pills */}
+      <div style={{ padding: 14, borderRadius: 14, background: C.panel, border: `1px solid ${C.line}`, marginBottom: 18 }}>
+        <div style={{ fontFamily: F.body, fontSize: 12, color: C.mute, marginBottom: 10 }}>Recupero automatico dopo ogni serie</div>
+        <div style={{ display: "flex", gap: 8 }}>
+          {[45, 60, 75, 90, 120].map((s) => { const a = restLen === s; return (
+            <button key={s} onClick={() => setRestLen(s)} style={{ flex: 1, padding: "14px 0", borderRadius: 10, cursor: "pointer", border: `1px solid ${a ? C.signal : C.line}`, background: a ? C.signal : "transparent", color: a ? C.bg : C.mute, fontFamily: F.body, fontSize: 14, fontWeight: a ? 700 : 500 }}>{s}s</button>
+          ); })}
         </div>
       </div>
 
-      {/* Set rows */}
       {rows.map((r, i) => {
         if (r.cardio) {
           return (
@@ -1001,7 +981,7 @@ function LiveSession({ day, restDefault, onFinish, onExit }) {
         Termina e registra ({doneCount}/{totalCount})
       </button>
       <div style={{ fontFamily: F.body, fontSize: 12, color: C.faint, textAlign: "center", marginTop: 10 }}>
-        Il peso è opzionale: per gli esercizi a corpo libero lascialo vuoto.
+        Spuntando una serie parte il recupero. Il peso è opzionale per il corpo libero.
       </div>
     </div>
   );
@@ -1010,6 +990,13 @@ const timerBtn = (rest) => ({ padding: "8px 10px", borderRadius: 8, border: `1px
 const checkBtn = (done, col) => ({ width: 40, height: 40, borderRadius: 10, flexShrink: 0, cursor: "pointer", border: `1px solid ${done ? col : C.line}`, background: done ? col : "transparent", color: C.bg, fontSize: 18, fontWeight: 800 });
 
 // ── Nutrition screen ─────────────────────────────────────────────
+const MEALS = [
+  { id: "colazione", l: "Colazione", pct: 0.25 },
+  { id: "merenda1", l: "Merenda mattina", pct: 0.10 },
+  { id: "pranzo", l: "Pranzo", pct: 0.30 },
+  { id: "merenda2", l: "Merenda pomeriggio", pct: 0.10 },
+  { id: "cena", l: "Cena", pct: 0.25 },
+];
 function Nutrition({ p, setP }) {
   const goal = p.nutriGoal || "maintain";
   const c = calories(p);
@@ -1018,40 +1005,72 @@ function Nutrition({ p, setP }) {
   return (
     <div>
       <h2 style={h2}>Nutrizione</h2>
-      <p style={sub}>Fabbisogno stimato dai tuoi dati (formula Mifflin-St Jeor) e ripartizione flat sui tre gruppi.</p>
+      <p style={sub}>Stima di riferimento dai tuoi dati (Mifflin-St Jeor), divisa nei 5 pasti della giornata.</p>
 
       <Field label="Obiettivo">
         <Seg value={goal} onChange={(v) => setP({ ...p, nutriGoal: v })}
           options={[{ v: "cut", l: "Dimagrire" }, { v: "maintain", l: "Mantenere" }, { v: "gain", l: "Massa" }]} />
       </Field>
 
-      <div style={{ padding: 20, borderRadius: 14, background: C.panel, border: `1px solid ${C.line}`, marginBottom: 14 }}>
-        <div style={{ fontFamily: F.body, fontSize: 12, color: C.mute }}>Calorie giornaliere consigliate</div>
+      <div style={{ padding: 20, borderRadius: 14, background: C.panel, border: `1px solid ${C.line}`, marginBottom: 16 }}>
+        <div style={{ fontFamily: F.body, fontSize: 12, color: C.mute }}>Totale giornaliero</div>
         <div style={{ fontFamily: F.display, fontSize: 52, fontWeight: 800, color: C.signal, lineHeight: 1.05 }}>{m.kcal}<span style={{ fontSize: 22, color: C.ink }}> kcal</span></div>
-        <div style={{ marginTop: 10, display: "flex", gap: 20, flexWrap: "wrap" }}>
-          <Stat k="Metabolismo basale" v={`${c.bmr} kcal`} />
-          <Stat k="Con attività" v={`${c.tdee} kcal`} />
+        <div style={{ marginTop: 12, display: "flex", gap: 18, flexWrap: "wrap" }}>
+          <MacroInline label="Carboidrati" g={m.carbs} color="#5AA9FF" />
+          <MacroInline label="Proteine" g={m.protein} color="#FF8A5A" />
+          <MacroInline label="Verdure/grassi" g={m.veg} color="#E4FF4F" />
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 16 }}>
-        <MacroCard label="Carboidrati" grams={m.carbs} color="#5AA9FF" note="pasta, riso, pane, avena, frutta" />
-        <MacroCard label="Proteine" grams={m.protein} color="#FF8A5A" note="carne, pesce, uova, legumi" />
-        <MacroCard label="Verdure e grassi buoni" grams={m.veg} color="#E4FF4F" note="verdure, olio evo, frutta secca, avocado" />
-      </div>
+      {/* Per-meal breakdown */}
+      <div style={{ fontFamily: F.body, fontSize: 13, color: C.mute, marginBottom: 10 }}>Divisione nei pasti</div>
+      {MEALS.map((meal) => {
+        const kcal = Math.round(m.kcal * meal.pct);
+        const carbs = Math.round(m.carbs * meal.pct);
+        const protein = Math.round(m.protein * meal.pct);
+        const veg = Math.round(m.veg * meal.pct);
+        return (
+          <div key={meal.id} style={{ padding: 14, borderRadius: 12, background: C.panel, border: `1px solid ${C.line}`, marginBottom: 8 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
+              <span style={{ fontFamily: F.display, fontSize: 16, fontWeight: 700, color: C.ink }}>{meal.l}</span>
+              <span style={{ fontFamily: F.body, fontSize: 13, color: C.signal, fontWeight: 600 }}>{kcal} kcal</span>
+            </div>
+            <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+              <MealMacro label="Carbo" g={carbs} color="#5AA9FF" />
+              <MealMacro label="Proteine" g={protein} color="#FF8A5A" />
+              <MealMacro label="Verdure/grassi" g={veg} color="#E4FF4F" />
+            </div>
+          </div>
+        );
+      })}
 
-      <div style={{ padding: 14, borderRadius: 12, background: C.panel, border: `1px solid ${C.line}` }}>
-        <div style={{ fontFamily: F.body, fontSize: 13, color: C.ink, fontWeight: 600, marginBottom: 6 }}>Come usarla (piano flat)</div>
-        <div style={{ fontFamily: F.body, fontSize: 13, color: C.mute, lineHeight: 1.6 }}>
-          Ad ogni pasto principale metti nel piatto: una fonte di <b style={{ color: C.ink }}>carboidrati</b>, una di <b style={{ color: C.ink }}>proteine</b> e una buona porzione di <b style={{ color: C.ink }}>verdure</b>. Nei giorni di allenamento intenso alza i carboidrati; nei giorni di riposo abbassali leggermente. Proteine circa {m.proteinPerKg} g per kg di peso.
+      <div style={{ padding: 14, borderRadius: 12, background: C.panel, border: `1px solid ${C.line}`, marginTop: 8 }}>
+        <div style={{ fontFamily: F.body, fontSize: 13, color: C.ink, fontWeight: 600, marginBottom: 6 }}>Esempi di cibi</div>
+        <div style={{ fontFamily: F.body, fontSize: 13, color: C.mute, lineHeight: 1.7 }}>
+          <b style={{ color: "#5AA9FF" }}>Carboidrati</b>: avena, pane integrale, riso, pasta, patate, frutta.<br />
+          <b style={{ color: "#FF8A5A" }}>Proteine</b>: uova, yogurt greco, pollo, pesce, legumi, ricotta.<br />
+          <b style={{ color: "#E4FF4F" }}>Verdure/grassi</b>: verdure a volontà, olio evo, frutta secca, avocado.
+        </div>
+        <div style={{ fontFamily: F.body, fontSize: 13, color: C.mute, lineHeight: 1.6, marginTop: 10 }}>
+          Nei giorni di allenamento intenso concentra più carboidrati nella merenda pre e nel pasto post allenamento. Proteine circa {m.proteinPerKg} g per kg.
         </div>
       </div>
 
       <div style={{ marginTop: 14, fontFamily: F.body, fontSize: 12, color: C.faint, lineHeight: 1.5 }}>
-        Sono stime indicative, non un piano medico. Per una preparazione impegnativa un nutrizionista sportivo resta il riferimento migliore.
+        Sono stime di riferimento indicative, non un piano medico. Non sono un nutrizionista: per la preparazione a una gara, valida questi numeri con un professionista.
       </div>
     </div>
   );
+}
+function MacroInline({ label, g, color }) {
+  return (<div><div style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ width: 8, height: 8, borderRadius: 8, background: color }} /><span style={{ fontFamily: F.body, fontSize: 11, color: C.faint }}>{label}</span></div>
+    <div style={{ fontFamily: F.body, fontSize: 16, color: C.ink, fontWeight: 700, marginTop: 3 }}>{g}g</div></div>);
+}
+function MealMacro({ label, g, color }) {
+  return (<div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+    <span style={{ width: 7, height: 7, borderRadius: 7, background: color }} />
+    <span style={{ fontFamily: F.body, fontSize: 13, color: C.ink }}><b>{g}g</b> <span style={{ color: C.faint }}>{label}</span></span>
+  </div>);
 }
 function MacroCard({ label, grams, color, note }) {
   return (
@@ -1204,6 +1223,128 @@ function Measures({ measures, setMeasures }) {
   );
 }
 
+// ── Audio beep (Web Audio, no external file) ─────────────────────
+let _audioCtx = null;
+function ensureAudio() {
+  try {
+    if (!_audioCtx) _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (_audioCtx.state === "suspended") _audioCtx.resume();
+  } catch {}
+  return _audioCtx;
+}
+function beep(times = 3) {
+  const ctx = ensureAudio();
+  if (!ctx) return;
+  let t = ctx.currentTime;
+  for (let i = 0; i < times; i++) {
+    const osc = ctx.createOscillator(), g = ctx.createGain();
+    osc.type = "sine"; osc.frequency.value = 880;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.5, t + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
+    osc.connect(g); g.connect(ctx.destination);
+    osc.start(t); osc.stop(t + 0.36);
+    t += 0.45;
+  }
+}
+
+// Global timer hook: mode "down" (countdown) or "up" (stopwatch)
+function useGlobalTimer() {
+  const [mode, setMode] = useState("down"); // "down" | "up"
+  const [running, setRunning] = useState(false);
+  const [remaining, setRemaining] = useState(0); // for countdown
+  const [elapsed, setElapsed] = useState(0);     // for stopwatch
+  const [target, setTarget] = useState(60);      // last countdown length
+  const finishedRef = React.useRef(false);
+
+  useEffect(() => {
+    if (!running) return;
+    const iv = setInterval(() => {
+      if (mode === "down") {
+        setRemaining((r) => {
+          if (r <= 1) {
+            if (!finishedRef.current) { finishedRef.current = true; beep(4); try { navigator.vibrate?.([300, 150, 300, 150, 300]); } catch {} }
+            setRunning(false);
+            return 0;
+          }
+          return r - 1;
+        });
+      } else {
+        setElapsed((e) => e + 1);
+      }
+    }, 1000);
+    return () => clearInterval(iv);
+  }, [running, mode]);
+
+  const startCountdown = (secs) => { ensureAudio(); finishedRef.current = false; setMode("down"); setTarget(secs); setRemaining(secs); setRunning(true); };
+  const startStopwatch = () => { ensureAudio(); setMode("up"); setElapsed(0); setRunning(true); };
+  const pause = () => setRunning(false);
+  const resume = () => { ensureAudio(); if (mode === "down" && remaining > 0) setRunning(true); if (mode === "up") setRunning(true); };
+  const reset = () => { setRunning(false); finishedRef.current = false; setRemaining(mode === "down" ? target : 0); setElapsed(0); };
+  const add = (s) => setRemaining((r) => r + s);
+  const stop = () => { setRunning(false); setRemaining(0); setElapsed(0); };
+
+  const active = running || (mode === "down" && remaining > 0) || (mode === "up" && elapsed > 0);
+  const value = mode === "down" ? remaining : elapsed;
+  return { mode, running, remaining, elapsed, target, value, active, startCountdown, startStopwatch, pause, resume, reset, add, stop, setTarget };
+}
+const fmtTime = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+
+// ── Timer screen (big, single-tap) ───────────────────────────────
+function TimerScreen({ T }) {
+  const presets = [30, 60, 90, 120, 180, 300];
+  const isDown = T.mode === "down";
+  const big = fmtTime(T.value);
+  const color = (isDown && T.remaining === 0 && !T.running && T.target) ? C.strength : C.signal;
+
+  return (
+    <div>
+      <h2 style={h2}>Timer</h2>
+      <p style={sub}>Cronometro e timer di recupero. Resta attivo anche se cambi sezione.</p>
+
+      {/* big display */}
+      <div style={{ padding: "36px 20px", borderRadius: 18, background: C.panel, border: `1px solid ${T.running ? C.signal : C.line}`, textAlign: "center", marginBottom: 18 }}>
+        <div style={{ fontFamily: F.body, fontSize: 13, color: C.mute, fontWeight: 600, marginBottom: 8 }}>{isDown ? "RECUPERO" : "CRONOMETRO"}</div>
+        <div style={{ fontFamily: F.display, fontSize: 88, fontWeight: 800, color, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>{big}</div>
+      </div>
+
+      {/* primary controls: big */}
+      <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
+        {!T.running ? (
+          <button onClick={T.resume} style={bigBtn(C.signal, C.bg)}>▶ Avvia</button>
+        ) : (
+          <button onClick={T.pause} style={bigBtn(C.panel, C.ink, true)}>⏸ Pausa</button>
+        )}
+        <button onClick={T.reset} style={bigBtn(C.panel, C.mute, true)}>↺ Reset</button>
+      </div>
+      {isDown && (
+        <div style={{ display: "flex", gap: 10, marginBottom: 22 }}>
+          <button onClick={() => T.add(15)} style={bigBtn(C.panel, C.ink, true)}>+15s</button>
+          <button onClick={() => T.add(30)} style={bigBtn(C.panel, C.ink, true)}>+30s</button>
+        </div>
+      )}
+
+      {/* countdown presets — big tiles, single tap starts */}
+      <div style={{ fontFamily: F.body, fontSize: 13, color: C.mute, marginBottom: 10 }}>Timer di recupero (tocca per avviare)</div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 22 }}>
+        {presets.map((s) => (
+          <button key={s} onClick={() => T.startCountdown(s)}
+            style={{ padding: "22px 0", borderRadius: 14, cursor: "pointer", border: `1px solid ${C.line}`, background: C.panel, color: C.ink, fontFamily: F.display, fontSize: 22, fontWeight: 800 }}>
+            {s < 60 ? `${s}s` : fmtTime(s)}
+          </button>
+        ))}
+      </div>
+
+      {/* stopwatch */}
+      <div style={{ fontFamily: F.body, fontSize: 13, color: C.mute, marginBottom: 10 }}>Esercizi a tempo (plank, dead hang, isometrie)</div>
+      <button onClick={T.startStopwatch} style={{ width: "100%", padding: "20px 0", borderRadius: 14, cursor: "pointer", border: `1px solid ${C.grip}`, background: "transparent", color: C.grip, fontFamily: F.display, fontSize: 18, fontWeight: 800 }}>
+        ▲ Avvia cronometro (conta in salita)
+      </button>
+    </div>
+  );
+}
+const bigBtn = (bg, col, outline) => ({ flex: 1, padding: "18px 0", borderRadius: 14, cursor: "pointer", border: outline ? `1px solid ${C.line}` : "none", background: bg, color: col, fontFamily: F.display, fontSize: 18, fontWeight: 800 });
+
 function App() {
   const [tab, setTab] = useState("plan");
   const [p, setP] = useState(() => store.get("profile_v5", {
@@ -1220,6 +1361,7 @@ function App() {
   useEffect(() => store.set("aiplan_v1", aiPlan), [aiPlan]);
   const [measures, setMeasures] = useState(() => store.get("measures_v1", {}));
   useEffect(() => store.set("measures_v1", measures), [measures]);
+  const T = useGlobalTimer();
   const tk = todayKey();
   const todayStatus = log[tk]?.status || null;
   const mark = (status, name) => {
@@ -1242,6 +1384,7 @@ function App() {
 
   const tabs = [
     { id: "plan", l: "Piano" },
+    { id: "timer", l: "Timer" },
     { id: "cal", l: "Diario" },
     { id: "lib", l: "Esercizi" },
     { id: "nutri", l: "Nutrizione" },
@@ -1257,7 +1400,8 @@ function App() {
         <span style={{ fontFamily: F.body, fontSize: 12, color: C.faint }}>Spartan training</span>
       </header>
       <main style={{ maxWidth: 520, margin: "0 auto", padding: "8px 20px 110px" }}>
-        {tab === "plan" && <Plan p={p} setP={setP} onMark={mark} todayStatus={todayStatus} aiPlan={aiPlan} setAiPlan={setAiPlan} />}
+        {tab === "plan" && <Plan p={p} setP={setP} onMark={mark} todayStatus={todayStatus} aiPlan={aiPlan} setAiPlan={setAiPlan} onQuickTimer={(s) => { T.startCountdown(s); }} />}
+        {tab === "timer" && <TimerScreen T={T} />}
         {tab === "race" && <Race p={p} setP={setP} onBuild={() => setTab("plan")} />}
         {tab === "cal" && <Calendar log={log} onSetDay={setDay} />}
         {tab === "lib" && <Library />}
@@ -1265,6 +1409,17 @@ function App() {
         {tab === "measures" && <Measures measures={measures} setMeasures={setMeasures} />}
         {tab === "profile" && <Profile p={p} setP={setP} />}
       </main>
+      {T.active && tab !== "timer" && (
+        <button onClick={() => setTab("timer")}
+          style={{ position: "fixed", left: 0, right: 0, bottom: "calc(58px + env(safe-area-inset-bottom))", zIndex: 40, border: "none", cursor: "pointer",
+            background: T.running ? C.signal : C.panel, color: T.running ? C.bg : C.ink,
+            padding: "12px 20px", display: "flex", alignItems: "center", justifyContent: "space-between",
+            maxWidth: 560, margin: "0 auto", fontFamily: F.body }}>
+          <span style={{ fontSize: 13, fontWeight: 700 }}>{T.mode === "down" ? "RECUPERO" : "CRONOMETRO"}</span>
+          <span style={{ fontFamily: F.display, fontSize: 26, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>{fmtTime(T.value)}</span>
+          <span style={{ fontSize: 13, fontWeight: 600 }}>{T.running ? "in corso ›" : "in pausa ›"}</span>
+        </button>
+      )}
       <nav style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: "rgba(14,15,19,.94)", backdropFilter: "blur(10px)", borderTop: `1px solid ${C.line}`, padding: "8px 0 calc(8px + env(safe-area-inset-bottom))" }}>
         <div style={{ display: "flex", gap: 6, maxWidth: 560, margin: "0 auto", padding: "0 12px", overflowX: "auto", WebkitOverflowScrolling: "touch", scrollbarWidth: "none" }}>
           {tabs.map((t) => { const a = tab === t.id; return (
