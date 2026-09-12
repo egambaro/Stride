@@ -802,6 +802,91 @@ function Calendar({ log, onSetDay }) {
 }
 const navBtn = { width: 36, height: 36, borderRadius: 9, border: `1px solid ${C.line}`, background: "transparent", color: C.ink, fontSize: 20, cursor: "pointer", lineHeight: 1 };
 
+// ── Muscle groups (Spartan-relevant) ─────────────────────────────
+const MUSCLES = [
+  { id: "pull", label: "Schiena / Trazione", color: "#5AA9FF" },
+  { id: "push", label: "Petto / Spinta", color: "#FF8A5A" },
+  { id: "legs", label: "Gambe", color: "#E4FF4F" },
+  { id: "core", label: "Core / Addome", color: "#B98CFF" },
+  { id: "grip", label: "Presa / Avambracci", color: "#5AE0C0" },
+  { id: "cardio", label: "Cardio / Fiato", color: "#FF6B9D" },
+];
+
+// ── Exercise library (original, Italian, gym+calisthenics) ────────
+// Structure inspired by common catalog shape (muscle/equipment/steps),
+// content written from scratch for this app.
+const LIBRARY = [
+  { id: "pullup", name: "Pull up", muscle: "pull", equip: "Sbarra", level: "Intermedio",
+    steps: ["Appenditi alla sbarra con presa prona, mani poco più larghe delle spalle.", "Attiva le scapole tirandole in basso.", "Tira il petto verso la sbarra portando i gomiti verso il basso.", "Supera con il mento la sbarra, poi scendi controllato fino a braccia distese."] },
+  { id: "chinup", name: "Chin up", muscle: "pull", equip: "Sbarra", level: "Base",
+    steps: ["Presa supina (palmi verso di te), mani a larghezza spalle.", "Tira portando il mento sopra la sbarra, gomiti vicini al corpo.", "Scendi lentamente controllando il movimento."] },
+  { id: "australian", name: "Australian pull up", muscle: "pull", equip: "Sbarra bassa / anelli", level: "Base",
+    steps: ["Sbarra all'altezza del bacino, corpo disteso sotto, talloni a terra.", "Corpo rigido come una plancia.", "Tira il petto verso la sbarra, scapole unite.", "Scendi controllato."] },
+  { id: "muscleup", name: "Muscle up", muscle: "pull", equip: "Sbarra / anelli", level: "Avanzato",
+    steps: ["Presa salda, esplodi con una trazione potente e alta.", "Al culmine ruota i polsi e porta il busto sopra la sbarra.", "Distendi le braccia in appoggio (transizione).", "Scendi controllato invertendo il movimento."] },
+  { id: "pushup", name: "Piegamenti (push up)", muscle: "push", equip: "Corpo libero", level: "Base",
+    steps: ["In appoggio, mani a larghezza spalle, corpo in linea retta.", "Scendi piegando i gomiti a ~45° dal busto.", "Sfiora il petto a terra.", "Spingi fino a braccia distese senza cedere sui fianchi."] },
+  { id: "dip", name: "Dip alle parallele", muscle: "push", equip: "Parallele", level: "Intermedio",
+    steps: ["In appoggio sulle parallele, braccia distese.", "Scendi piegando i gomiti fino a ~90°.", "Busto leggermente inclinato in avanti.", "Spingi fino a tornare in appoggio completo."] },
+  { id: "dipanelli", name: "Dip agli anelli", muscle: "push", equip: "Anelli", level: "Avanzato",
+    steps: ["In appoggio sugli anelli, cerca la stabilità.", "Scendi controllando l'oscillazione degli anelli.", "Risali mantenendo gli anelli vicini al corpo."] },
+  { id: "pike", name: "Pike push up", muscle: "push", equip: "Corpo libero", level: "Intermedio",
+    steps: ["Posizione a V rovesciata, bacino in alto.", "Piega i gomiti portando la testa verso terra.", "Spingi tornando alla posizione iniziale. Enfasi sulle spalle."] },
+  { id: "squat", name: "Squat a corpo libero", muscle: "legs", equip: "Corpo libero", level: "Base",
+    steps: ["Piedi a larghezza spalle, punte leggermente aperte.", "Scendi spingendo i fianchi indietro, schiena neutra.", "Coscia parallela al suolo o più giù.", "Risali spingendo dai talloni."] },
+  { id: "lunge", name: "Affondi", muscle: "legs", equip: "Corpo libero", level: "Base",
+    steps: ["Passo avanti ampio.", "Scendi finché il ginocchio posteriore sfiora terra.", "Ginocchio anteriore sopra la caviglia, non oltre la punta.", "Spingi e torna, alterna le gambe."] },
+  { id: "bulgaro", name: "Squat bulgaro", muscle: "legs", equip: "Panca / rialzo", level: "Intermedio",
+    steps: ["Piede posteriore su un rialzo dietro di te.", "Scendi con la gamba anteriore, busto leggermente avanti.", "Risali spingendo dal tallone anteriore."] },
+  { id: "plank", name: "Plank", muscle: "core", equip: "Corpo libero", level: "Base",
+    steps: ["Appoggio su avambracci e punte dei piedi.", "Corpo in linea retta, addome e glutei contratti.", "Non far cadere il bacino. Mantieni la tenuta."] },
+  { id: "legraise", name: "Leg raise", muscle: "core", equip: "Sbarra / a terra", level: "Intermedio",
+    steps: ["Appeso alla sbarra o disteso a terra.", "Solleva le gambe tese (o ginocchia) verso l'alto.", "Controlla la discesa senza dondolare."] },
+  { id: "toestobar", name: "Toes to bar", muscle: "core", equip: "Sbarra", level: "Avanzato",
+    steps: ["Appeso alla sbarra, spalle attive.", "Porta le punte dei piedi a toccare la sbarra.", "Scendi controllato, gestisci lo swing."] },
+  { id: "dragonflag", name: "Dragon flag", muscle: "core", equip: "Panca", level: "Avanzato",
+    steps: ["Sdraiato, afferra un appoggio dietro la testa.", "Solleva tutto il corpo rigido come una tavola.", "Abbassa lentamente restando dritto, senza piegare i fianchi."] },
+  { id: "deadhang", name: "Dead hang", muscle: "grip", equip: "Sbarra", level: "Base",
+    steps: ["Appenditi alla sbarra a braccia distese.", "Spalle leggermente attive, non del tutto passive.", "Mantieni la presa il più a lungo possibile."] },
+  { id: "monkeybar", name: "Monkey bar", muscle: "grip", equip: "Struttura sospesa", level: "Intermedio",
+    steps: ["Avanza spostando una mano alla volta tra gli appigli.", "Usa lo slancio del corpo per accompagnare il movimento.", "Fondamentale per gli ostacoli Spartan."] },
+  { id: "farmer", name: "Farmer walk", muscle: "grip", equip: "Pesi / kettlebell", level: "Base",
+    steps: ["Cammina tenendo un carico pesante in ogni mano.", "Busto eretto, spalle indietro.", "Simula il trasporto carichi (bucket/sandbag) in gara."] },
+];
+
+// ── Nutrition: Mifflin-St Jeor + flat macro split ────────────────
+function bmr(sex, kg, cm, age) {
+  if (!kg || !cm || !age) return null;
+  const base = 10 * kg + 6.25 * cm - 5 * age;
+  return Math.round(sex === "f" ? base - 161 : base + 5);
+}
+const ACTIVITY = { 3: 1.45, 4: 1.55, 5: 1.65, 6: 1.75 }; // by weekly sessions
+function calories(p) {
+  const b = bmr(p.sex, +p.weight, +p.height, +p.age);
+  if (!b) return null;
+  const freq = (p.trainDays?.length) || 3;
+  const act = ACTIVITY[Math.min(6, Math.max(3, freq))] || 1.5;
+  let tdee = Math.round(b * act);
+  // goal adjustment: endurance/cardio focus slightly higher; general keep maintenance
+  return { bmr: b, tdee };
+}
+// Flat macro split on 3 buckets: carbs / veg / protein (by % of kcal)
+function macros(p, goalPreset) {
+  const c = calories(p);
+  if (!c) return null;
+  const kcal = c.tdee + (goalPreset === "gain" ? 300 : goalPreset === "cut" ? -400 : 0);
+  // Spartan endurance-friendly flat split: 45% carbs, 30% protein, 25% "verdure/fibre+grassi buoni"
+  const carbKcal = kcal * 0.45, proKcal = kcal * 0.30, vegKcal = kcal * 0.25;
+  return {
+    kcal: Math.round(kcal),
+    carbs: Math.round(carbKcal / 4), // g
+    protein: Math.round(proKcal / 4),
+    veg: Math.round(vegKcal / 9 * 0.4 + vegKcal / 4 * 0.6), // mixed fibre/fats approx
+    proteinPerKg: +(proKcal / 4 / (+p.weight || 1)).toFixed(1),
+  };
+}
+
+
 // ── Live session: guided workout with per-set logging + rest timer ─
 // Idea inspired by GymMane's live-session UX, reimplemented from scratch.
 function parseSets(exercise) {
@@ -924,6 +1009,201 @@ function LiveSession({ day, restDefault, onFinish, onExit }) {
 const timerBtn = (rest) => ({ padding: "8px 10px", borderRadius: 8, border: `1px solid ${rest > 0 ? C.bg : C.line}`, background: "transparent", color: rest > 0 ? C.bg : C.mute, fontFamily: F.body, fontSize: 13, fontWeight: 600, cursor: "pointer" });
 const checkBtn = (done, col) => ({ width: 40, height: 40, borderRadius: 10, flexShrink: 0, cursor: "pointer", border: `1px solid ${done ? col : C.line}`, background: done ? col : "transparent", color: C.bg, fontSize: 18, fontWeight: 800 });
 
+// ── Nutrition screen ─────────────────────────────────────────────
+function Nutrition({ p, setP }) {
+  const goal = p.nutriGoal || "maintain";
+  const c = calories(p);
+  const m = macros(p, goal);
+  if (!c) return <div><h2 style={h2}>Nutrizione</h2><Empty text="Completa peso, altezza, età e sesso nel Profilo per calcolare il fabbisogno." /></div>;
+  return (
+    <div>
+      <h2 style={h2}>Nutrizione</h2>
+      <p style={sub}>Fabbisogno stimato dai tuoi dati (formula Mifflin-St Jeor) e ripartizione flat sui tre gruppi.</p>
+
+      <Field label="Obiettivo">
+        <Seg value={goal} onChange={(v) => setP({ ...p, nutriGoal: v })}
+          options={[{ v: "cut", l: "Dimagrire" }, { v: "maintain", l: "Mantenere" }, { v: "gain", l: "Massa" }]} />
+      </Field>
+
+      <div style={{ padding: 20, borderRadius: 14, background: C.panel, border: `1px solid ${C.line}`, marginBottom: 14 }}>
+        <div style={{ fontFamily: F.body, fontSize: 12, color: C.mute }}>Calorie giornaliere consigliate</div>
+        <div style={{ fontFamily: F.display, fontSize: 52, fontWeight: 800, color: C.signal, lineHeight: 1.05 }}>{m.kcal}<span style={{ fontSize: 22, color: C.ink }}> kcal</span></div>
+        <div style={{ marginTop: 10, display: "flex", gap: 20, flexWrap: "wrap" }}>
+          <Stat k="Metabolismo basale" v={`${c.bmr} kcal`} />
+          <Stat k="Con attività" v={`${c.tdee} kcal`} />
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 16 }}>
+        <MacroCard label="Carboidrati" grams={m.carbs} color="#5AA9FF" note="pasta, riso, pane, avena, frutta" />
+        <MacroCard label="Proteine" grams={m.protein} color="#FF8A5A" note="carne, pesce, uova, legumi" />
+        <MacroCard label="Verdure e grassi buoni" grams={m.veg} color="#E4FF4F" note="verdure, olio evo, frutta secca, avocado" />
+      </div>
+
+      <div style={{ padding: 14, borderRadius: 12, background: C.panel, border: `1px solid ${C.line}` }}>
+        <div style={{ fontFamily: F.body, fontSize: 13, color: C.ink, fontWeight: 600, marginBottom: 6 }}>Come usarla (piano flat)</div>
+        <div style={{ fontFamily: F.body, fontSize: 13, color: C.mute, lineHeight: 1.6 }}>
+          Ad ogni pasto principale metti nel piatto: una fonte di <b style={{ color: C.ink }}>carboidrati</b>, una di <b style={{ color: C.ink }}>proteine</b> e una buona porzione di <b style={{ color: C.ink }}>verdure</b>. Nei giorni di allenamento intenso alza i carboidrati; nei giorni di riposo abbassali leggermente. Proteine circa {m.proteinPerKg} g per kg di peso.
+        </div>
+      </div>
+
+      <div style={{ marginTop: 14, fontFamily: F.body, fontSize: 12, color: C.faint, lineHeight: 1.5 }}>
+        Sono stime indicative, non un piano medico. Per una preparazione impegnativa un nutrizionista sportivo resta il riferimento migliore.
+      </div>
+    </div>
+  );
+}
+function MacroCard({ label, grams, color, note }) {
+  return (
+    <div style={{ padding: 14, borderRadius: 12, background: C.panel, border: `1px solid ${C.line}` }}>
+      <div style={{ width: 8, height: 8, borderRadius: 8, background: color, marginBottom: 8 }} />
+      <div style={{ fontFamily: F.display, fontSize: 26, fontWeight: 800, color: C.ink, lineHeight: 1 }}>{grams}<span style={{ fontSize: 13, color: C.mute }}>g</span></div>
+      <div style={{ fontFamily: F.body, fontSize: 12, color: C.ink, fontWeight: 600, marginTop: 4 }}>{label}</div>
+      <div style={{ fontFamily: F.body, fontSize: 11, color: C.faint, marginTop: 4, lineHeight: 1.4 }}>{note}</div>
+    </div>
+  );
+}
+
+// ── Library screen (muscle selector + exercise list) ─────────────
+function Library() {
+  const [sel, setSel] = useState("pull");
+  const [openEx, setOpenEx] = useState(null);
+  const list = LIBRARY.filter((e) => e.muscle === sel);
+  const group = MUSCLES.find((m) => m.id === sel);
+  return (
+    <div>
+      <h2 style={h2}>Esercizi</h2>
+      <p style={sub}>Scegli un gruppo muscolare per vedere gli esercizi e come eseguirli.</p>
+
+      {/* muscle group selector */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 20 }}>
+        {MUSCLES.map((mg) => { const a = sel === mg.id; return (
+          <button key={mg.id} onClick={() => { setSel(mg.id); setOpenEx(null); }}
+            style={{ display: "flex", alignItems: "center", gap: 10, padding: "14px 14px", borderRadius: 12, cursor: "pointer", textAlign: "left", border: `1px solid ${a ? mg.color : C.line}`, background: a ? C.panel : "transparent" }}>
+            <span style={{ width: 12, height: 12, borderRadius: 12, background: mg.color, flexShrink: 0 }} />
+            <span style={{ fontFamily: F.body, fontSize: 13, fontWeight: a ? 700 : 500, color: a ? C.ink : C.mute }}>{mg.label}</span>
+          </button>
+        ); })}
+      </div>
+
+      <div style={{ fontFamily: F.body, fontSize: 12, color: C.faint, marginBottom: 10 }}>{list.length} esercizi · {group?.label}</div>
+      {list.map((e) => {
+        const isOpen = openEx === e.id;
+        return (
+          <div key={e.id} style={{ border: `1px solid ${isOpen ? group.color : C.line}`, borderRadius: 14, marginBottom: 10, overflow: "hidden", background: C.panel }}>
+            <button onClick={() => setOpenEx(isOpen ? null : e.id)} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 16px", background: "transparent", border: "none", cursor: "pointer", textAlign: "left" }}>
+              <div>
+                <div style={{ fontFamily: F.display, fontSize: 17, fontWeight: 700, color: C.ink }}>{e.name}</div>
+                <div style={{ fontFamily: F.body, fontSize: 12, color: C.faint, marginTop: 2 }}>{e.equip} · {e.level}</div>
+              </div>
+              <span style={{ color: group.color, fontSize: 22, transform: isOpen ? "rotate(45deg)" : "none", transition: "transform .2s" }}>+</span>
+            </button>
+            {isOpen && (
+              <div style={{ padding: "0 16px 16px" }}>
+                <ol style={{ margin: 0, paddingLeft: 20, color: C.ink, fontFamily: F.body, fontSize: 14, lineHeight: 1.7 }}>
+                  {e.steps.map((s, i) => <li key={i} style={{ marginBottom: 4 }}>{s}</li>)}
+                </ol>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Measures screen: body weight + circumferences over time ──────
+function Measures({ measures, setMeasures }) {
+  const [kind, setKind] = useState("peso");
+  const [val, setVal] = useState("");
+  const kinds = [
+    { id: "peso", l: "Peso", unit: "kg" },
+    { id: "vita", l: "Vita", unit: "cm" },
+    { id: "petto", l: "Petto", unit: "cm" },
+    { id: "braccia", l: "Braccia", unit: "cm" },
+    { id: "coscia", l: "Coscia", unit: "cm" },
+  ];
+  const cur = kinds.find((k) => k.id === kind);
+  const series = (measures[kind] || []).slice().sort((a, b) => a.d.localeCompare(b.d));
+
+  const add = () => {
+    if (!val) return;
+    const d = todayKey();
+    const next = { ...measures, [kind]: [...(measures[kind] || []).filter((e) => e.d !== d), { d, v: +val }] };
+    setMeasures(next); setVal("");
+  };
+  const removeLast = () => {
+    const arr = (measures[kind] || []).slice().sort((a, b) => a.d.localeCompare(b.d));
+    if (!arr.length) return;
+    arr.pop();
+    setMeasures({ ...measures, [kind]: arr });
+  };
+
+  // mini SVG chart
+  const chart = () => {
+    if (series.length < 2) return <div style={{ padding: 30, textAlign: "center", fontFamily: F.body, fontSize: 13, color: C.faint }}>Servono almeno 2 rilevazioni per il grafico.</div>;
+    const W = 300, H = 120, pad = 8;
+    const vals = series.map((s) => s.v);
+    const min = Math.min(...vals), max = Math.max(...vals), range = max - min || 1;
+    const pts = series.map((s, i) => {
+      const x = pad + (i / (series.length - 1)) * (W - 2 * pad);
+      const y = H - pad - ((s.v - min) / range) * (H - 2 * pad);
+      return [x, y];
+    });
+    const path = pts.map((p, i) => `${i ? "L" : "M"}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" ");
+    return (
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto" }}>
+        <path d={path} fill="none" stroke={C.signal} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
+        {pts.map((p, i) => <circle key={i} cx={p[0]} cy={p[1]} r="3" fill={C.signal} />)}
+      </svg>
+    );
+  };
+
+  const first = series[0]?.v, last = series[series.length - 1]?.v;
+  const delta = (first != null && last != null) ? +(last - first).toFixed(1) : null;
+
+  return (
+    <div>
+      <h2 style={h2}>Misure</h2>
+      <p style={sub}>Registra peso e circonferenze e segui l'andamento nel tempo.</p>
+
+      <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
+        {kinds.map((k) => { const a = kind === k.id; return (
+          <button key={k.id} onClick={() => setKind(k.id)} style={{ flex: "1 1 auto", minWidth: 56, padding: "10px 8px", borderRadius: 10, cursor: "pointer", fontFamily: F.body, fontSize: 13, border: `1px solid ${a ? C.signal : C.line}`, background: a ? C.signal : "transparent", color: a ? C.bg : C.mute, fontWeight: a ? 700 : 500 }}>{k.l}</button>
+        ); })}
+      </div>
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 18 }}>
+        <input inputMode="decimal" value={val} onChange={(e) => setVal(e.target.value)} placeholder={`Nuovo valore (${cur.unit})`} style={{ ...inputStyle, flex: 1 }} />
+        <button onClick={add} style={{ padding: "0 20px", borderRadius: 10, border: "none", background: C.signal, color: C.bg, fontFamily: F.body, fontWeight: 700, fontSize: 15, cursor: "pointer" }}>Aggiungi</button>
+      </div>
+
+      <div style={{ padding: 16, borderRadius: 14, background: C.panel, border: `1px solid ${C.line}`, marginBottom: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 10 }}>
+          <span style={{ fontFamily: F.body, fontSize: 13, color: C.mute }}>{cur.l} nel tempo</span>
+          {delta != null && <span style={{ fontFamily: F.body, fontSize: 13, fontWeight: 600, color: delta === 0 ? C.mute : delta < 0 ? C.signal : C.strength }}>{delta > 0 ? "+" : ""}{delta} {cur.unit}</span>}
+        </div>
+        {chart()}
+      </div>
+
+      {series.length > 0 && (
+        <div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+            <span style={{ fontFamily: F.body, fontSize: 13, color: C.mute }}>Storico</span>
+            <button onClick={removeLast} style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${C.line}`, background: "transparent", color: C.faint, fontFamily: F.body, fontSize: 12, cursor: "pointer" }}>Rimuovi ultimo</button>
+          </div>
+          {series.slice().reverse().map((s, i) => (
+            <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "10px 14px", borderRadius: 10, background: C.panel, border: `1px solid ${C.line}`, marginBottom: 6 }}>
+              <span style={{ fontFamily: F.body, fontSize: 13, color: C.mute }}>{s.d.split("-").reverse().join("/")}</span>
+              <span style={{ fontFamily: F.body, fontSize: 14, color: C.ink, fontWeight: 600 }}>{s.v} {cur.unit}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function App() {
   const [tab, setTab] = useState("plan");
   const [p, setP] = useState(() => store.get("profile_v5", {
@@ -938,6 +1218,8 @@ function App() {
   useEffect(() => saveLog(log), [log]);
   const [aiPlan, setAiPlan] = useState(() => store.get("aiplan_v1", null));
   useEffect(() => store.set("aiplan_v1", aiPlan), [aiPlan]);
+  const [measures, setMeasures] = useState(() => store.get("measures_v1", {}));
+  useEffect(() => store.set("measures_v1", measures), [measures]);
   const tk = todayKey();
   const todayStatus = log[tk]?.status || null;
   const mark = (status, name) => {
@@ -958,7 +1240,15 @@ function App() {
     });
   };
 
-  const tabs = [{ id: "plan", l: "Piano" }, { id: "race", l: "Gara" }, { id: "cal", l: "Diario" }, { id: "profile", l: "Profilo" }];
+  const tabs = [
+    { id: "plan", l: "Piano" },
+    { id: "cal", l: "Diario" },
+    { id: "lib", l: "Esercizi" },
+    { id: "nutri", l: "Nutrizione" },
+    { id: "measures", l: "Misure" },
+    { id: "race", l: "Gara" },
+    { id: "profile", l: "Profilo" },
+  ];
   return (
     <div style={{ minHeight: "100vh", background: C.bg, color: C.ink }}>
       <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
@@ -970,12 +1260,15 @@ function App() {
         {tab === "plan" && <Plan p={p} setP={setP} onMark={mark} todayStatus={todayStatus} aiPlan={aiPlan} setAiPlan={setAiPlan} />}
         {tab === "race" && <Race p={p} setP={setP} onBuild={() => setTab("plan")} />}
         {tab === "cal" && <Calendar log={log} onSetDay={setDay} />}
+        {tab === "lib" && <Library />}
+        {tab === "nutri" && <Nutrition p={p} setP={setP} />}
+        {tab === "measures" && <Measures measures={measures} setMeasures={setMeasures} />}
         {tab === "profile" && <Profile p={p} setP={setP} />}
       </main>
-      <nav style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: "rgba(14,15,19,.92)", backdropFilter: "blur(10px)", borderTop: `1px solid ${C.line}`, display: "flex", padding: "10px 12px calc(10px + env(safe-area-inset-bottom))" }}>
-        <div style={{ display: "flex", maxWidth: 520, margin: "0 auto", width: "100%", gap: 8 }}>
+      <nav style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: "rgba(14,15,19,.94)", backdropFilter: "blur(10px)", borderTop: `1px solid ${C.line}`, padding: "8px 0 calc(8px + env(safe-area-inset-bottom))" }}>
+        <div style={{ display: "flex", gap: 6, maxWidth: 560, margin: "0 auto", padding: "0 12px", overflowX: "auto", WebkitOverflowScrolling: "touch", scrollbarWidth: "none" }}>
           {tabs.map((t) => { const a = tab === t.id; return (
-            <button key={t.id} onClick={() => setTab(t.id)} style={{ flex: 1, padding: "12px 0", borderRadius: 10, border: "none", cursor: "pointer", fontFamily: F.body, fontSize: 14, fontWeight: a ? 700 : 500, background: a ? C.panel : "transparent", color: a ? C.signal : C.mute }}>{t.l}</button>); })}
+            <button key={t.id} onClick={() => setTab(t.id)} style={{ flex: "0 0 auto", padding: "10px 16px", borderRadius: 10, border: "none", cursor: "pointer", fontFamily: F.body, fontSize: 14, fontWeight: a ? 700 : 500, background: a ? C.panel : "transparent", color: a ? C.signal : C.mute, whiteSpace: "nowrap" }}>{t.l}</button>); })}
         </div>
       </nav>
     </div>
