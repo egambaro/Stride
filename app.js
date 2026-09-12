@@ -300,8 +300,9 @@ function Metric({ k, v, wide }) {
 }
 function Empty({ text }) { return <div style={{ padding: 40, textAlign: "center", color: C.mute, fontFamily: F.body, fontSize: 15, lineHeight: 1.6 }}>{text}</div>; }
 
-function Calendar({ log }) {
+function Calendar({ log, onSetDay }) {
   const [cur, setCur] = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; });
+  const [sel, setSel] = useState(null); // selected day key being edited
   const monthNames = ["Gennaio", "Febbraio", "Marzo", "Aprile", "Maggio", "Giugno", "Luglio", "Agosto", "Settembre", "Ottobre", "Novembre", "Dicembre"];
   const dow = ["L", "M", "M", "G", "V", "S", "D"];
 
@@ -365,21 +366,51 @@ function Calendar({ log }) {
         <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 6 }}>
           {cells.map((d, i) => {
             if (!d) return <div key={i} />;
-            const e = log[key(d)];
-            const isToday = key(d) === tk;
+            const k = key(d);
+            const e = log[k];
+            const isToday = k === tk;
+            const isFuture = k > tk;
             let bg = "transparent", col = C.mute, bd = C.line;
             if (e?.status === "done") { bg = C.signal; col = C.bg; bd = C.signal; }
             else if (e?.status === "skip") { bg = C.strength; col = C.bg; bd = C.strength; }
+            const selected = sel === k;
             return (
-              <div key={i} style={{ aspectRatio: "1", display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 9, background: bg, border: `1px solid ${isToday && !e ? C.signal : bd}`, fontFamily: F.body, fontSize: 13, fontWeight: e ? 700 : 500, color: col }}>
+              <button key={i} disabled={isFuture} onClick={() => setSel(selected ? null : k)}
+                style={{ aspectRatio: "1", display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 9, background: bg, border: `1px solid ${selected ? C.ink : (isToday && !e ? C.signal : bd)}`, fontFamily: F.body, fontSize: 13, fontWeight: e ? 700 : 500, color: isFuture ? C.faint : col, cursor: isFuture ? "default" : "pointer", opacity: isFuture ? 0.4 : 1, padding: 0 }}>
                 {d}
-              </div>
+              </button>
             );
           })}
         </div>
       </div>
 
-      {total === 0 && <p style={{ marginTop: 16, fontFamily: F.body, fontSize: 13, color: C.faint, textAlign: "center" }}>Segna una sessione come "Fatto" nel Piano per iniziare il monitoraggio.</p>}
+      {sel && (
+        <div style={{ marginTop: 14, padding: 16, borderRadius: 14, background: C.panel, border: `1px solid ${C.ink}` }}>
+          <div style={{ fontFamily: F.body, fontSize: 13, color: C.mute, marginBottom: 12 }}>
+            {(() => { const [yy, mm, dd] = sel.split("-"); return `${+dd} ${monthNames[+mm - 1]} ${yy}`; })()}
+            {log[sel]?.name ? ` · ${log[sel].name}` : ""}
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={() => { onSetDay(sel, "done"); }}
+              style={{ flex: 1, padding: "11px 0", borderRadius: 10, cursor: "pointer", fontFamily: F.body, fontSize: 14, fontWeight: 700, border: `1px solid ${log[sel]?.status === "done" ? C.signal : C.line}`, background: log[sel]?.status === "done" ? C.signal : "transparent", color: log[sel]?.status === "done" ? C.bg : C.ink }}>
+              ✓ Fatto
+            </button>
+            <button onClick={() => { onSetDay(sel, "skip"); }}
+              style={{ flex: 1, padding: "11px 0", borderRadius: 10, cursor: "pointer", fontFamily: F.body, fontSize: 14, fontWeight: 600, border: `1px solid ${log[sel]?.status === "skip" ? C.strength : C.line}`, background: log[sel]?.status === "skip" ? C.strength : "transparent", color: log[sel]?.status === "skip" ? C.bg : C.mute }}>
+              Saltato
+            </button>
+            {log[sel] && (
+              <button onClick={() => { onSetDay(sel, null); }}
+                style={{ padding: "11px 14px", borderRadius: 10, cursor: "pointer", fontFamily: F.body, fontSize: 14, fontWeight: 500, border: `1px solid ${C.line}`, background: "transparent", color: C.faint }}>
+                Rimuovi
+              </button>
+            )}
+          </div>
+          <div style={{ marginTop: 10, fontFamily: F.body, fontSize: 12, color: C.faint }}>Allenamento libero o fatto per conto tuo: segnalo qui.</div>
+        </div>
+      )}
+
+      {total === 0 && <p style={{ marginTop: 16, fontFamily: F.body, fontSize: 13, color: C.faint, textAlign: "center" }}>Tocca un giorno per segnare un allenamento, oppure usa i pulsanti nel Piano.</p>}
     </div>
   );
 }
@@ -406,6 +437,15 @@ function App() {
       return next;
     });
   };
+  const setDay = (dayKey, status) => {
+    setLog((prev) => {
+      const next = { ...prev };
+      if (status === null) delete next[dayKey];
+      else if (next[dayKey]?.status === status) delete next[dayKey]; // toggle off
+      else next[dayKey] = { status, name: next[dayKey]?.name || "Allenamento libero" };
+      return next;
+    });
+  };
 
   const tabs = [{ id: "plan", l: "Piano" }, { id: "race", l: "Gara" }, { id: "cal", l: "Diario" }, { id: "profile", l: "Profilo" }];
   return (
@@ -418,7 +458,7 @@ function App() {
       <main style={{ maxWidth: 520, margin: "0 auto", padding: "8px 20px 110px" }}>
         {tab === "plan" && <Plan p={p} onMark={mark} todayStatus={todayStatus} />}
         {tab === "race" && <Race p={p} setP={setP} onBuild={() => setTab("plan")} />}
-        {tab === "cal" && <Calendar log={log} />}
+        {tab === "cal" && <Calendar log={log} onSetDay={setDay} />}
         {tab === "profile" && <Profile p={p} setP={setP} />}
       </main>
       <nav style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: "rgba(14,15,19,.92)", backdropFilter: "blur(10px)", borderTop: `1px solid ${C.line}`, display: "flex", padding: "10px 12px calc(10px + env(safe-area-inset-bottom))" }}>
