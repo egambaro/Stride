@@ -80,7 +80,9 @@ function buildWeek(p) {
   const km = +p.raceKm || race.km;
   const obst = +p.raceObstacles || race.obstacles;
   const lvl = +p.level;
-  const freq = +p.freq;
+  const dayNames = ["Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom"];
+  const chosen = Array.isArray(p.trainDays) && p.trainDays.length ? [...p.trainDays].sort((a, b) => a - b) : [0, 2, 4];
+  const freq = chosen.length;
   const lib = phaseKeyToLib(ph.key);
   const taper = ph.key === "taper";
   const weak = p.weakness;
@@ -114,8 +116,6 @@ function buildWeek(p) {
   if (weak === "pull") gyms.unshift({ name: "Focus TRAZIONE + grip", blocks: [S("Trazione (priorità)", pick(pull, 3)), S("Grip", pick(grip, 2), true)] });
   if (weak === "push") gyms.unshift({ name: "Focus SPINTA", blocks: [S("Spinta (priorità)", pick(push, 3)), S("Core", pick(core, 1))] });
 
-  const days = ["Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom"];
-  const spread = freq >= 6 ? [0,1,2,3,4,5] : freq >= 5 ? [0,1,2,4,5] : freq >= 4 ? [0,2,4,6] : [0,3,5];
   const cardioSlots = weak === "endurance" ? Math.ceil(freq / 2) + 1 : Math.max(2, Math.floor(freq / 2));
   const cardioSeq = [cardio.intervals, cardio.long, cardio.hill];
 
@@ -127,8 +127,9 @@ function buildWeek(p) {
   }
   const out = []; let ci = 0, gi = 0;
   zipped.forEach((kind, i) => {
-    if (kind === "c") { const b = cardioSeq[ci % 3]; out.push({ day: days[spread[i] ?? i], name: b.title, blocks: [b] }); ci++; }
-    else { const g = gyms[gi % gyms.length]; out.push({ day: days[spread[i] ?? i], name: g.name, blocks: g.blocks }); gi++; }
+    const label = dayNames[chosen[i]] ?? dayNames[i];
+    if (kind === "c") { const b = cardioSeq[ci % 3]; out.push({ day: label, name: b.title, blocks: [b] }); ci++; }
+    else { const g = gyms[gi % gyms.length]; out.push({ day: label, name: g.name, blocks: g.blocks }); gi++; }
   });
   return { phase: ph, weeks: w, km, obst, days: out };
 }
@@ -144,6 +145,22 @@ function Seg({ options, value, onChange }) {
     {options.map((o) => { const a = value === o.v; return (
       <button key={o.v} onClick={() => onChange(o.v)} style={{ flex: "1 1 auto", minWidth: 56, padding: "10px 12px", borderRadius: 10, cursor: "pointer", fontFamily: F.body, fontSize: 14, border: `1px solid ${a ? C.signal : C.line}`, background: a ? C.signal : "transparent", color: a ? C.bg : C.mute, fontWeight: a ? 600 : 500 }}>{o.l}</button>); })}
   </div>);
+}
+function DayPicker({ value, onChange }) {
+  const labels = ["Lun", "Mar", "Mer", "Gio", "Ven", "Sab", "Dom"];
+  const toggle = (i) => {
+    const has = value.includes(i);
+    let next = has ? value.filter((x) => x !== i) : [...value, i];
+    if (next.length === 0) return; // keep at least one day
+    onChange(next.sort((a, b) => a - b));
+  };
+  return (
+    <div style={{ display: "flex", gap: 6 }}>
+      {labels.map((l, i) => { const a = value.includes(i); return (
+        <button key={i} onClick={() => toggle(i)}
+          style={{ flex: 1, padding: "12px 0", borderRadius: 10, cursor: "pointer", fontFamily: F.body, fontSize: 13, border: `1px solid ${a ? C.signal : C.line}`, background: a ? C.signal : "transparent", color: a ? C.bg : C.mute, fontWeight: a ? 700 : 500 }}>{l}</button>); })}
+    </div>
+  );
 }
 const h2 = { fontFamily: F.display, fontSize: 28, fontWeight: 800, color: C.ink, margin: "0 0 4px", letterSpacing: "-.01em" };
 const sub = { fontFamily: F.body, fontSize: 14, color: C.mute, margin: "0 0 22px", lineHeight: 1.5 };
@@ -165,8 +182,8 @@ function Race({ p, setP, onBuild }) {
         <Field label="Lunghezza gara (km)"><input style={inputStyle} type="number" inputMode="numeric" value={p.raceKm} onChange={set("raceKm")} /></Field>
         <Field label="Numero ostacoli"><input style={inputStyle} type="number" inputMode="numeric" value={p.raceObstacles} onChange={set("raceObstacles")} /></Field>
       </div>
-      <Field label="Sessioni a settimana">
-        <Seg value={+p.freq} onChange={(v) => setP({ ...p, freq: v })} options={[{ v: 3, l: "3" }, { v: 4, l: "4" }, { v: 5, l: "5" }, { v: 6, l: "6" }]} />
+      <Field label={`Giorni di allenamento${(p.trainDays?.length) ? ` · ${p.trainDays.length} a settimana` : ""}`}>
+        <DayPicker value={p.trainDays || [0, 2, 4]} onChange={(v) => setP({ ...p, trainDays: v })} />
       </Field>
       <Field label="Punto debole su cui insistere">
         <Seg value={p.weakness} onChange={(v) => setP({ ...p, weakness: v })} options={[{ v: "balanced", l: "Bilanciato" }, { v: "endurance", l: "Fiato" }, { v: "pull", l: "Trazione/grip" }, { v: "push", l: "Spinta" }]} />
@@ -418,12 +435,12 @@ const navBtn = { width: 36, height: 36, borderRadius: 9, border: `1px solid ${C.
 
 function App() {
   const [tab, setTab] = useState("plan");
-  const [p, setP] = useState(() => store.get("profile_v2", {
+  const [p, setP] = useState(() => store.get("profile_v3", {
     height: "", weight: "", age: "", sex: "m", level: 1,
     raceDate: "", raceType: "super", raceKm: 10, raceObstacles: 25,
-    freq: 4, weakness: "balanced", defaultIncline: 3,
+    trainDays: [0, 2, 4], weakness: "balanced", defaultIncline: 3,
   }));
-  useEffect(() => store.set("profile_v2", p), [p]);
+  useEffect(() => store.set("profile_v3", p), [p]);
 
   const [log, setLog] = useState(() => loadLog());
   useEffect(() => saveLog(log), [log]);
