@@ -503,6 +503,7 @@ function Plan({ p, setP, onMark, todayStatus, aiPlan, setAiPlan }) {
   const [err, setErr] = useState(null);
   const [proposal, setProposal] = useState(null); // pending AI plan awaiting approval
   const [swap, setSwap] = useState(null); // {bi,bj,ek,alts}
+  const [live, setLive] = useState(null); // day object being trained live
 
   if (!p.age || !p.height || !p.weight) return <Empty text="Completa il Profilo per generare il piano." />;
   if (!p.raceDate) return <Empty text="Imposta la data della gara nella sezione Gara." />;
@@ -512,6 +513,12 @@ function Plan({ p, setP, onMark, todayStatus, aiPlan, setAiPlan }) {
 
   const days = aiPlan || gen.days; // AI plan overrides engine plan when present
   const hasKey = !!p.aiKey;
+
+  if (live) {
+    return <LiveSession day={live} restDefault={75}
+      onExit={() => setLive(null)}
+      onFinish={(summary) => { onMark("done", live.name); setLive(null); }} />;
+  }
 
   const runRewrite = async () => {
     setErr(null); setBusy("rewrite");
@@ -636,7 +643,10 @@ function Plan({ p, setP, onMark, todayStatus, aiPlan, setAiPlan }) {
                     <p style={{ margin: "10px 0 0", fontFamily: F.body, fontSize: 13, color: C.mute, lineHeight: 1.5 }}>{bl.detail}</p>
                   </div>
                 ))}
-                <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+                <button onClick={() => setLive(s)} style={{ ...cta, marginTop: 16 }}>
+                  ▶ Avvia allenamento
+                </button>
+                <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
                   <button onClick={() => onMark("done", s.name)}
                     style={{ flex: 1, padding: "12px 0", borderRadius: 10, cursor: "pointer", fontFamily: F.body, fontSize: 14, fontWeight: 700, border: `1px solid ${todayStatus === "done" ? C.signal : C.line}`, background: todayStatus === "done" ? C.signal : "transparent", color: todayStatus === "done" ? C.bg : C.ink }}>
                     ✓ Fatto oggi
@@ -791,6 +801,128 @@ function Calendar({ log, onSetDay }) {
   );
 }
 const navBtn = { width: 36, height: 36, borderRadius: 9, border: `1px solid ${C.line}`, background: "transparent", color: C.ink, fontSize: 20, cursor: "pointer", lineHeight: 1 };
+
+// ── Live session: guided workout with per-set logging + rest timer ─
+// Idea inspired by GymMane's live-session UX, reimplemented from scratch.
+function parseSets(exercise) {
+  // "Pull up · 3×12–15" -> {name:"Pull up", sets:3, reps:"12–15"}
+  const m = exercise.match(/^(.*?)\s*·\s*(\d+)\s*×\s*(.+)$/);
+  if (m) return { name: m[1].trim(), sets: Math.min(8, +m[2]), reps: m[3].trim() };
+  return { name: exercise, sets: 3, reps: "10" };
+}
+function LiveSession({ day, restDefault, onFinish, onExit }) {
+  // build editable set list from the day's strength/grip blocks
+  const initial = [];
+  (day.blocks || []).forEach((b) => {
+    if (b.type === "cardio") { initial.push({ cardio: true, title: b.title, detail: b.detail, duration: b.duration, done: false }); return; }
+    (b.exercises || []).forEach((ex) => {
+      const ps = parseSets(ex);
+      for (let i = 0; i < ps.sets; i++) initial.push({ name: ps.name, targetReps: ps.reps, reps: "", weight: "", done: false, setNo: i + 1, of: ps.sets });
+    });
+  });
+  const [rows, setRows] = useState(initial);
+  const [rest, setRest] = useState(0); // seconds remaining
+  const [restLen, setRestLen] = useState(restDefault || 75);
+  const [startedAt] = useState(Date.now());
+
+  useEffect(() => {
+    if (rest <= 0) return;
+    const t = setInterval(() => setRest((r) => {
+      if (r <= 1) { clearInterval(t); try { navigator.vibrate?.(400); } catch {} return 0; }
+      return r - 1;
+    }), 1000);
+    return () => clearInterval(t);
+  }, [rest > 0]);
+
+  const setRow = (i, patch) => setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  const toggleDone = (i) => {
+    const r = rows[i];
+    setRow(i, { done: !r.done });
+    if (!r.done && !r.cardio) setRest(restLen); // starting rest after completing a set
+  };
+
+  const doneCount = rows.filter((r) => r.done).length;
+  const totalCount = rows.length;
+  const volume = rows.reduce((s, r) => s + ((r.done && r.reps && r.weight) ? (+r.reps * +r.weight) : 0), 0);
+
+  const fmt = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+
+  return (
+    <div style={{ paddingBottom: 20 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+        <h2 style={{ ...h2, marginBottom: 0 }}>{day.name}</h2>
+        <button onClick={onExit} style={{ padding: "8px 12px", borderRadius: 9, border: `1px solid ${C.line}`, background: "transparent", color: C.mute, fontFamily: F.body, fontSize: 13, cursor: "pointer" }}>Esci</button>
+      </div>
+      <p style={sub}>{day.day} · {doneCount}/{totalCount} completati{volume ? ` · volume ${volume} kg` : ""}</p>
+
+      {/* Rest timer bar */}
+      <div style={{ position: "sticky", top: 0, zIndex: 5, padding: 14, borderRadius: 14, background: rest > 0 ? C.signal : C.panel, border: `1px solid ${rest > 0 ? C.signal : C.line}`, marginBottom: 16, transition: "background .2s" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div>
+            <div style={{ fontFamily: F.body, fontSize: 11, color: rest > 0 ? C.bg : C.faint, fontWeight: 600 }}>RECUPERO</div>
+            <div style={{ fontFamily: F.display, fontSize: 34, fontWeight: 800, color: rest > 0 ? C.bg : C.ink, lineHeight: 1 }}>{fmt(rest)}</div>
+          </div>
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            {rest > 0 ? (
+              <>
+                <button onClick={() => setRest((r) => r + 15)} style={timerBtn(rest)}>+15s</button>
+                <button onClick={() => setRest(0)} style={timerBtn(rest)}>Stop</button>
+              </>
+            ) : (
+              [45, 60, 75, 90, 120].map((s) => (
+                <button key={s} onClick={() => { setRestLen(s); setRest(s); }} style={{ ...timerBtn(0), background: restLen === s ? C.line : "transparent" }}>{s}s</button>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Set rows */}
+      {rows.map((r, i) => {
+        if (r.cardio) {
+          return (
+            <div key={i} style={{ padding: 14, borderRadius: 12, marginBottom: 8, background: C.panel, border: `1px solid ${r.done ? C.cardio : C.line}` }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div>
+                  <div style={{ fontFamily: F.body, fontSize: 14, fontWeight: 600, color: C.ink }}>{r.title}</div>
+                  <div style={{ fontFamily: F.body, fontSize: 12, color: C.mute, marginTop: 2 }}>{r.duration} min</div>
+                </div>
+                <button onClick={() => toggleDone(i)} style={checkBtn(r.done, C.cardio)}>{r.done ? "✓" : ""}</button>
+              </div>
+            </div>
+          );
+        }
+        const first = i === 0 || rows[i - 1].name !== r.name || rows[i - 1].cardio;
+        return (
+          <div key={i}>
+            {first && <div style={{ fontFamily: F.display, fontSize: 16, fontWeight: 700, color: C.ink, margin: "14px 0 8px" }}>{r.name}</div>}
+            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 12, marginBottom: 6, background: C.panel, border: `1px solid ${r.done ? C.signal : C.line}` }}>
+              <span style={{ fontFamily: F.body, fontSize: 12, color: C.faint, width: 44 }}>Serie {r.setNo}</span>
+              <input inputMode="numeric" placeholder={r.targetReps} value={r.reps} onChange={(e) => setRow(i, { reps: e.target.value })}
+                style={{ width: 56, textAlign: "center", background: C.bg, border: `1px solid ${C.line}`, borderRadius: 8, color: C.ink, padding: "8px 4px", fontFamily: F.body, fontSize: 15 }} />
+              <span style={{ fontFamily: F.body, fontSize: 12, color: C.faint }}>rip</span>
+              <input inputMode="decimal" placeholder="kg" value={r.weight} onChange={(e) => setRow(i, { weight: e.target.value })}
+                style={{ width: 56, textAlign: "center", background: C.bg, border: `1px solid ${C.line}`, borderRadius: 8, color: C.ink, padding: "8px 4px", fontFamily: F.body, fontSize: 15 }} />
+              <span style={{ fontFamily: F.body, fontSize: 12, color: C.faint }}>kg</span>
+              <div style={{ flex: 1 }} />
+              <button onClick={() => toggleDone(i)} style={checkBtn(r.done, C.signal)}>{r.done ? "✓" : ""}</button>
+            </div>
+          </div>
+        );
+      })}
+
+      <button onClick={() => onFinish({ volume, sets: doneCount, duration: Math.round((Date.now() - startedAt) / 60000) })}
+        style={{ ...cta, marginTop: 18 }}>
+        Termina e registra ({doneCount}/{totalCount})
+      </button>
+      <div style={{ fontFamily: F.body, fontSize: 12, color: C.faint, textAlign: "center", marginTop: 10 }}>
+        Il peso è opzionale: per gli esercizi a corpo libero lascialo vuoto.
+      </div>
+    </div>
+  );
+}
+const timerBtn = (rest) => ({ padding: "8px 10px", borderRadius: 8, border: `1px solid ${rest > 0 ? C.bg : C.line}`, background: "transparent", color: rest > 0 ? C.bg : C.mute, fontFamily: F.body, fontSize: 13, fontWeight: 600, cursor: "pointer" });
+const checkBtn = (done, col) => ({ width: 40, height: 40, borderRadius: 10, flexShrink: 0, cursor: "pointer", border: `1px solid ${done ? col : C.line}`, background: done ? col : "transparent", color: C.bg, fontSize: 18, fontWeight: 800 });
 
 function App() {
   const [tab, setTab] = useState("plan");
